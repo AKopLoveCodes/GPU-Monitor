@@ -36,10 +36,18 @@
 
 ```sh
 git clone <your-repo-url> gpu-monitor && cd gpu-monitor
-cp config.example.json config.json
+python3 scripts/manage.py init
 ```
 
-编辑 `config.json`：把每个 `ssh_host` 设为 SSH 别名或 `user@host`，为每台服务器设置唯一的 `name` 与 `exporter_port`，并在 `own_users` 中填入你的 Unix 用户名以启用“只看我使用的 GPU”筛选。
+`init` 会扫描 `~/.ssh/config` 中的具体别名，以只读的 `nvidia-smi` 测试它们，询问一次确认后为实际报告 NVIDIA GPU 的主机创建私有 `config.json`。显示名、SSH 配置中的用户名会自动推导；本地 exporter 端口在运行时自动选择，无需手工分配。若只想测试指定别名：
+
+```sh
+python3 scripts/manage.py init gpu-01 gpu-02
+```
+
+无人值守环境可追加 `--yes`。除非明确传入 `--force`，`init` 绝不会覆盖已有的 `config.json`。
+
+之后需要添加服务器时，也不必编辑 JSON：停止服务后运行 `python3 scripts/manage.py init --add gpu-03`，它会探测该别名，并只把兼容的 GPU 主机合并进现有配置，其他设置保持不变。
 
 然后双击 **`Start.command`**，或运行：
 
@@ -47,7 +55,7 @@ cp config.example.json config.json
 python3 scripts/manage.py start --open
 ```
 
-随即打开 <http://127.0.0.1:8765>，首次采样需要几秒钟。双击 **`Stop.command`** 或运行 `python3 scripts/manage.py stop` 停止；`status` 查看运行状态。关闭网页不会停止后台采集。当前版本不设置开机启动，重启电脑后需再次启动。
+随后打开命令打印的本地地址（通常是 <http://127.0.0.1:8765>；若该端口被占用，`init` 会选择另一个空闲端口），首次采样需要几秒钟。双击 **`Stop.command`** 或运行 `python3 scripts/manage.py stop` 停止；`status` 查看运行状态。关闭网页不会停止后台采集。当前版本不设置开机启动，重启电脑后需再次启动。
 
 `config.json` 保存本机特有的 SSH 别名，故意不入库；`config.example.json` 是模板。
 
@@ -63,9 +71,9 @@ python3 scripts/manage.py start --open
 | `own_users` | `[]` | 视为“我的”Unix 用户名，驱动“只看我使用的 GPU”筛选。 |
 | `servers[].name` | — | 唯一显示名，`[A-Za-z0-9_-]+`。 |
 | `servers[].ssh_host` | — | SSH 配置别名或 `user@host`。 |
-| `servers[].exporter_port` | — | 该服务器 exporter 的本地唯一端口（1024–65535）。 |
+| `servers[].exporter_port` | 自动 | 可选的旧版覆盖项；新配置无需填写。 |
 
-修改 `config.json` 后重启服务生效。
+高级手工配置仍可参考 `config.example.json`。仅当自动发现的结果需要调整时才编辑 `config.json`，改后重启服务生效。
 
 ## 采集方式
 
@@ -73,13 +81,13 @@ python3 scripts/manage.py start --open
 本地浏览器 127.0.0.1:8765
         ↓
 Python 本地服务（快照、短期趋势、进程详情）
-        ├─ 官方 exporter 127.0.0.1:19835 → ssh gpu-01 → nvidia-smi
-        └─ 官方 exporter 127.0.0.1:19836 → ssh gpu-02 → nvidia-smi
+        ├─ 官方 exporter 127.0.0.1:<自动端口> → ssh gpu-01 → nvidia-smi
+        └─ 官方 exporter 127.0.0.1:<自动端口> → ssh gpu-02 → nvidia-smi
 ```
 
 指标来自官方 [nvidia_gpu_exporter](https://github.com/utkuozdemir/nvidia_gpu_exporter) v1.16.0 二进制，使用其支持的[远程采集方式](https://github.com/utkuozdemir/nvidia_gpu_exporter/blob/v1.16.0/docs/CONFIGURE.md#remote-scraping)：`scripts/ssh_smi.py` 作为远端 `nvidia-smi` 命令，并启用 `--collect.compute-apps`。Python 服务再通过同一 SSH 连接执行 `ps`，为每个 GPU 进程补充用户、CPU 均值、完整命令与运行时长。SSH 复用连接使用本应用专有的 `.runtime/` 控制套接字，不接管你的终端会话；密钥继续由 OpenSSH 管理，不复制到项目。
 
-exporter 二进制在首次启动时由 `scripts/bootstrap.py` 从官方 GitHub Release 下载并做 SHA-256 校验，放入不入库的 `.tools/` 目录。详见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+exporter 压缩包会在首次启动时由 `scripts/bootstrap.py` 从官方 GitHub Release 下载并做 SHA-256 校验，放入私有且不入库的 `.tools/` 目录。之后启动时会复核压缩包和解出的二进制；下载和替换均为原子操作，中断下载不会成为可执行文件。详见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 
 ## “空闲”的定义
 
@@ -99,15 +107,23 @@ exporter 二进制在首次启动时由 `scripts/bootstrap.py` 从官方 GitHub 
 
 ## 故障排查
 
+先运行完整的本地与远端环境检查：
+
+```sh
+python3 scripts/manage.py doctor
+```
+
+它会检查本机 SSH 客户端、exporter 平台支持、网页端口可用性，以及每台已配置主机的免密 SSH、`nvidia-smi` 与 `ps` 能力。该命令不会修改配置，也不会下载或安装任何内容。
+
 ```sh
 ssh -o BatchMode=yes -o ConnectTimeout=6 <ssh_host> nvidia-smi
 ```
 
 失败时先解决网络 / VPN / 密钥解锁 / SSH 配置问题；应用不会交互式询问密码。新增服务器前，先在终端正常连接一次并核验主机指纹。
 
-日志位于 `.runtime/monitor.log` 与 `.runtime/<name>-exporter.log`。启动脚本能识别本应用已运行的实例，不会重复启动，也不会停止恰好占用端口的其他程序。
+日志位于 `.runtime/monitor.log` 与 `.runtime/<name>-exporter.log`。启动脚本能识别本应用已运行的实例，不会重复启动，也不会停止恰好占用端口的其他程序。本地指标端点无响应时，每个采集器只会重启自己启动的 exporter，绝不会停止远端进程；仓库路径过长时会自动使用私有的短 SSH 控制套接字目录，避免 OpenSSH 的路径长度限制。
 
-没有 Rosetta 的 Apple Silicon 无法运行 x86_64 版 exporter；请安装 Rosetta 或自行提供兼容构建，`bootstrap.py` 不会修改系统组件。
+没有 Rosetta 的 Apple Silicon 无法运行 x86_64 版 exporter；请安装 Rosetta 或自行提供兼容构建。启动前把其绝对路径设为 `GPU_MONITOR_EXPORTER`（例如 `GPU_MONITOR_EXPORTER=/opt/bin/nvidia_gpu_exporter python3 scripts/manage.py start`）。该二进制会以 `--version` 检查，但本项目不会下载或替换它。
 
 ## 开发与测试
 

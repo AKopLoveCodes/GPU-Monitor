@@ -5,10 +5,14 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import time
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from server import control_socket_path
+
 CONFIG = json.loads((ROOT / 'config.json').read_text())
 HOST = CONFIG['servers'][0]
 URL = 'http://127.0.0.1:%d/api/status' % CONFIG['port']
@@ -20,7 +24,7 @@ def snapshot():
 
 
 if __name__ == '__main__':
-    control = ROOT / '.runtime' / ('ssh-' + HOST['name'])
+    control = control_socket_path(ROOT / '.runtime', HOST['name'])
     before = snapshot()
     assert all(server['status'] == 'online' for server in before.values())
     subprocess.run(['ssh', '-S', str(control), '-O', 'exit', HOST['ssh_host']], capture_output=True, text=True, check=True)

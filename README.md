@@ -49,12 +49,25 @@ port is opened, and no GPU workload is started.
 
 ```sh
 git clone <your-repo-url> gpu-monitor && cd gpu-monitor
-cp config.example.json config.json
+python3 scripts/manage.py init
 ```
 
-Edit `config.json`: set each `ssh_host` to an SSH alias or `user@host`, give every server
-a unique `name` and `exporter_port`, and put your Unix user name(s) into `own_users` to
-enable the “Only GPUs I use” filter.
+`init` discovers concrete aliases in `~/.ssh/config`, tests them with read-only
+`nvidia-smi`, asks once for confirmation, and creates a private `config.json` for the
+hosts that actually report NVIDIA GPUs. It derives display names and your configured SSH
+user automatically; local exporter ports are selected at runtime, so there is nothing to
+allocate manually. To test only named aliases, use:
+
+```sh
+python3 scripts/manage.py init gpu-01 gpu-02
+```
+
+For unattended setup, add `--yes`. `init` never overwrites an existing `config.json`
+unless you explicitly supply `--force`.
+
+To add a server later without editing JSON, stop the service and run
+`python3 scripts/manage.py init --add gpu-03`; it probes the alias and merges a compatible
+GPU host while preserving the rest of the configuration.
 
 Then either double-click **`Start.command`**, or run:
 
@@ -62,7 +75,8 @@ Then either double-click **`Start.command`**, or run:
 python3 scripts/manage.py start --open
 ```
 
-which opens <http://127.0.0.1:8765>. The first sample takes a few seconds. Stop with
+which opens the local URL it prints (normally <http://127.0.0.1:8765>; another free port
+is chosen during `init` if that is occupied). The first sample takes a few seconds. Stop with
 **`Stop.command`** or `python3 scripts/manage.py stop`; `status` reports the running
 instance. Closing the browser does not stop collection. The service is not started at
 login; run it again after a reboot.
@@ -82,9 +96,10 @@ login; run it again after a reboot.
 | `own_users` | `[]` | Unix user names highlighted as yours; powers the “mine” filter. |
 | `servers[].name` | — | Unique display name, `[A-Za-z0-9_-]+`. |
 | `servers[].ssh_host` | — | SSH config alias or `user@host`. |
-| `servers[].exporter_port` | — | Unique local port for that server's exporter (1024–65535). |
+| `servers[].exporter_port` | auto | Optional legacy override; new configurations should omit it. |
 
-Edit `config.json` and restart the service to apply changes.
+`config.example.json` remains available for advanced manual setups. Edit `config.json`
+only when the automatic discovery result needs changing, then restart the service.
 
 ## How collection works
 
@@ -92,8 +107,8 @@ Edit `config.json` and restart the service to apply changes.
 Browser (127.0.0.1:8765)
         ↓
 Python local service (snapshot, short-term trends, process details)
-        ├─ official exporter 127.0.0.1:19835 → ssh gpu-01 → nvidia-smi
-        └─ official exporter 127.0.0.1:19836 → ssh gpu-02 → nvidia-smi
+        ├─ official exporter 127.0.0.1:<auto port> → ssh gpu-01 → nvidia-smi
+        └─ official exporter 127.0.0.1:<auto port> → ssh gpu-02 → nvidia-smi
 ```
 
 Metrics come from the official [nvidia_gpu_exporter](https://github.com/utkuozdemir/nvidia_gpu_exporter)
@@ -105,8 +120,10 @@ owner, CPU mean, command line and uptime for each GPU process. Reused SSH connec
 app-private control sockets under `.runtime/`; your own terminal sessions and keys are
 untouched (keys stay with OpenSSH and are never copied).
 
-The exporter binary is downloaded on first start from the official GitHub release with a
-SHA-256 check (`scripts/bootstrap.py`) into the untracked `.tools/` directory. See
+The exporter archive is downloaded on first start from the official GitHub release with a
+SHA-256 check (`scripts/bootstrap.py`) into the private, untracked `.tools/` directory.
+The archive and extracted binary are rechecked on later starts; downloads and replacements
+are atomic, so an interrupted download never becomes the executable. See
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## What “idle” means
@@ -140,6 +157,16 @@ never a reservation.
 
 ## Troubleshooting
 
+Start with a complete local and remote prerequisite check:
+
+```sh
+python3 scripts/manage.py doctor
+```
+
+It checks the local SSH client, exporter platform support, dashboard-port availability and
+every configured host's passwordless SSH, `nvidia-smi` and `ps` capability. It changes no
+configuration and never downloads or installs anything.
+
 ```sh
 ssh -o BatchMode=yes -o ConnectTimeout=6 <ssh_host> nvidia-smi
 ```
@@ -150,10 +177,16 @@ before adding a new server.
 
 Logs live in `.runtime/monitor.log` and `.runtime/<name>-exporter.log`. The start script
 recognizes its own running instance and neither double-starts nor stops unrelated
-processes that happen to use the same port.
+processes that happen to use the same port. Each collector restarts its own exporter after
+an unresponsive local metrics endpoint; no remote process is stopped. Long checkout paths
+use a private short control-socket directory automatically, avoiding OpenSSH socket-path
+limits.
 
 On Apple Silicon without Rosetta the x86_64 exporter build cannot run; install Rosetta or
-provide a compatible build yourself — `bootstrap.py` never modifies system components.
+provide a compatible build yourself. Set `GPU_MONITOR_EXPORTER` to its absolute path before
+starting (for example, `GPU_MONITOR_EXPORTER=/opt/bin/nvidia_gpu_exporter python3 scripts/manage.py start`).
+The supplied binary is checked with `--version` but is intentionally not downloaded or
+replaced by this project.
 
 ## Development and tests
 

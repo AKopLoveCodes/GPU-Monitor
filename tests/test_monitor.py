@@ -6,7 +6,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from server import HostMonitor, MonitorError, decode_snapshot, load_config, parse_metrics, parse_ps
+from server import HostMonitor, MonitorError, control_socket_path, decode_snapshot, load_config, parse_metrics, parse_ps
 
 FIXTURE = '''# HELP nvidia_smi_memory_used_bytes GPU memory
 nvidia_smi_last_collect_success 1
@@ -92,12 +92,24 @@ class WorkerTests(unittest.TestCase):
             self.assertFalse(recovered['gpus'][0]['stale'])
             self.assertEqual(len(recovered['gpus'][0]['history']), 2)
 
+    def test_unresponsive_exporter_is_recycled_before_the_next_interval(self):
+        with tempfile.TemporaryDirectory() as directory:
+            monitor = HostMonitor({'name': 'Test', 'ssh_host': 'Test', 'exporter_port': 19000},
+                                  {'interval_seconds': 3, 'collection_timeout_seconds': 10, 'history_points': 2},
+                                  Path(directory), threading.Event())
+            with patch.object(monitor, 'ensure_exporter'), patch.object(monitor, 'stop_exporter') as stopped, \
+                    patch('server.urllib.request.urlopen', side_effect=OSError('connection reset')):
+                with self.assertRaises(MonitorError) as caught:
+                    monitor.collect_once()
+            self.assertEqual(caught.exception.code, 'exporter_unavailable')
+            stopped.assert_called_once()
+
 
 class ConfigTests(unittest.TestCase):
     def test_rejects_conflicting_ports_and_shell_options(self):
         base = json.loads((Path(__file__).resolve().parents[1] / 'config.example.json').read_text())
         cases = []
-        config = copy.deepcopy(base); config['servers'][1]['exporter_port'] = config['servers'][0]['exporter_port']; cases.append(config)
+        config = copy.deepcopy(base); config['servers'][0]['exporter_port'] = 19000; config['servers'][1]['exporter_port'] = 19000; cases.append(config)
         config = copy.deepcopy(base); config['servers'][0]['ssh_host'] = '-oProxyCommand=bad'; cases.append(config)
         config = copy.deepcopy(base); config['listen'] = '0.0.0.0'; cases.append(config)
         with tempfile.TemporaryDirectory() as directory:
@@ -119,6 +131,24 @@ class ConfigTests(unittest.TestCase):
                 path.write_text(json.dumps(config))
                 with self.assertRaises(ValueError):
                     load_config(path)
+
+    def test_auto_exporter_ports_and_bad_server_shapes(self):
+        base = json.loads((Path(__file__).resolve().parents[1] / 'config.example.json').read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'config.json'
+            path.write_text(json.dumps(base))
+            settings = load_config(path)
+            self.assertNotIn('exporter_port', settings['servers'][0])
+            malformed = copy.deepcopy(base)
+            malformed['servers'] = [{'name': 'only-a-name'}]
+            path.write_text(json.dumps(malformed))
+            with self.assertRaisesRegex(ValueError, 'name and ssh_host'):
+                load_config(path)
+
+    def test_control_socket_uses_a_short_digest_for_long_names(self):
+        path = control_socket_path(Path('/tmp'), 'host-' + 'very-long-name-' * 20)
+        self.assertLessEqual(len(path.encode()), 90)
+        self.assertRegex(Path(path).name, r'^ssh-[0-9a-f]{20}$')
 
     def test_missing_config_explains_how_to_create_it(self):
         with tempfile.TemporaryDirectory() as directory:
