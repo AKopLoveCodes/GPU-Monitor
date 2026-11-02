@@ -1,7 +1,7 @@
 # GPU Monitor
 
 Monitor NVIDIA GPUs across SSH servers in a local dashboard: find free GPUs,
-view processes and recent utilization, and copy `CUDA_VISIBLE_DEVICES` commands.
+view processes and recent utilization.
 Supports Chinese / English and light / dark themes. Monitoring is read-only;
 no server packages or services need to be installed.
 
