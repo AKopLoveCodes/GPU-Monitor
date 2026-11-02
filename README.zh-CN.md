@@ -68,6 +68,7 @@ python3 scripts/manage.py start --open
 | `interval_seconds` | `3` | 每台服务器的采集间隔（≥ 1）。 |
 | `collection_timeout_seconds` | `10` | 单次采集超时（1–30）。 |
 | `history_points` | `100` | 每张 GPU 的内存样本数（2–1200）。 |
+| `utilization_backend` | `nvml` | 通过 SSH 获取历史利用率样本；`exporter` 恢复原来的单点采集。 |
 | `own_users` | `[]` | 视为“我的”Unix 用户名，驱动“只看我使用的 GPU”筛选。 |
 | `servers[].name` | — | 唯一显示名，`[A-Za-z0-9_-]+`。 |
 | `servers[].ssh_host` | — | SSH 配置别名或 `user@host`。 |
@@ -81,11 +82,18 @@ python3 scripts/manage.py start --open
 本地浏览器 127.0.0.1:8765
         ↓
 Python 本地服务（快照、短期趋势、进程详情）
+        ├─ NVML 历史流 → ssh GPU 主机 → Python ctypes → 驱动采样缓冲区
         ├─ 官方 exporter 127.0.0.1:<自动端口> → ssh gpu-01 → nvidia-smi
         └─ 官方 exporter 127.0.0.1:<自动端口> → ssh gpu-02 → nvidia-smi
 ```
 
-指标来自官方 [nvidia_gpu_exporter](https://github.com/utkuozdemir/nvidia_gpu_exporter) v1.16.0 二进制，使用其支持的[远程采集方式](https://github.com/utkuozdemir/nvidia_gpu_exporter/blob/v1.16.0/docs/CONFIGURE.md#remote-scraping)：`scripts/ssh_smi.py` 作为远端 `nvidia-smi` 命令，并启用 `--collect.compute-apps`。Python 服务再通过同一 SSH 连接执行 `ps`，为每个 GPU 进程补充用户、CPU 均值、完整命令与运行时长。SSH 复用连接使用本应用专有的 `.runtime/` 控制套接字，不接管你的终端会话；密钥继续由 OpenSSH 管理，不复制到项目。
+GPU 利用率默认使用 **NVML 历史样本**：通过一条常驻 SSH 通道，在 Linux GPU 主机上运行仅依赖 Python 标准库的辅助进程，每秒按时间戳增量读取 `nvmlDeviceGetSamples()`，取回两次读取之间的驱动样本。远端需要 Python 3、`ctypes` 和 `libnvidia-ml.so.1`，不安装文件、软件包或系统服务；SSH 通道关闭后进程退出。不支持或数据过期时自动回退到 exporter 单点值，并在页面提示。配置 `"utilization_backend": "exporter"` 可以完全停用此辅助进程。
+
+卡片同时展示最新值、**近 30 秒时间加权均值、峰值和覆盖率**。覆盖率表示整个窗口内具有有效驱动样本区间的时间比例；启动初期和丢失区间为未知，不补 0，均值仅针对有覆盖的时间计算。超过 1.5 秒的驱动样本间隔视为缺口。NVML 可用时，趋势采用每个采集间隔的平均利用率。缓存仅驻留内存，精度仍受驱动原生采样分辨率限制。
+
+显存、温度、功耗及计算进程列表仍来自官方 [nvidia_gpu_exporter](https://github.com/utkuozdemir/nvidia_gpu_exporter) v1.16.0，使用其[远程采集方式](https://github.com/utkuozdemir/nvidia_gpu_exporter/blob/v1.16.0/docs/CONFIGURE.md#remote-scraping)：`scripts/ssh_smi.py` 转发远端命令，并启用 `--collect.compute-apps`。Python 服务另外执行 `ps` 补充用户、CPU 均值、完整命令与运行时长。这是混合采集：保留原有 `nvidia-smi` 查询，额外增加轻量常驻进程。exporter 与 `ps` 共用本应用 `.runtime/` 中的 SSH 控制套接字；NVML 流使用独立常驻连接，避免其卡住时连带阻塞回退采集。密钥继续由 OpenSSH 管理。
+
+实测开销与限制见 [NVML 测试报告](docs/NVML_TEST_REPORT.md)。
 
 exporter 压缩包会在首次启动时由 `scripts/bootstrap.py` 从官方 GitHub Release 下载并做 SHA-256 校验，放入私有且不入库的 `.tools/` 目录。之后启动时会复核压缩包和解出的二进制；下载和替换均为原子操作，中断下载不会成为可执行文件。详见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 

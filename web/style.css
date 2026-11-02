@@ -362,3 +362,5 @@ dialog::backdrop { background: #11111180; backdrop-filter: blur(3px); }
   .detail-chart > div:first-child { align-items: flex-start; flex-direction: column; gap: 6px; }
   .gpu-info { grid-template-columns: 120px 1fr; gap: 9px; }
 }
+
+.util-window { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 12px; color: var(--muted); font-size: 12px; line-height: 1.6; font-variant-numeric: tabular-nums; }

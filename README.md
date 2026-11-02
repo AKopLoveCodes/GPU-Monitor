@@ -93,6 +93,7 @@ login; run it again after a reboot.
 | `interval_seconds` | `3` | Collection interval per server (≥ 1). |
 | `collection_timeout_seconds` | `10` | Per-collection timeout (1–30). |
 | `history_points` | `100` | In-memory samples per GPU (2–1200). |
+| `utilization_backend` | `nvml` | Buffered utilization over SSH; `exporter` restores the original point-sampling path. |
 | `own_users` | `[]` | Unix user names highlighted as yours; powers the “mine” filter. |
 | `servers[].name` | — | Unique display name, `[A-Za-z0-9_-]+`. |
 | `servers[].ssh_host` | — | SSH config alias or `user@host`. |
@@ -107,18 +108,38 @@ only when the automatic discovery result needs changing, then restart the servic
 Browser (127.0.0.1:8765)
         ↓
 Python local service (snapshot, short-term trends, process details)
+        ├─ NVML history stream → ssh gpu hosts → Python ctypes → driver sample buffer
         ├─ official exporter 127.0.0.1:<auto port> → ssh gpu-01 → nvidia-smi
         └─ official exporter 127.0.0.1:<auto port> → ssh gpu-02 → nvidia-smi
 ```
 
-Metrics come from the official [nvidia_gpu_exporter](https://github.com/utkuozdemir/nvidia_gpu_exporter)
-v1.16.0 binary via its supported
-[remote scraping mode](https://github.com/utkuozdemir/nvidia_gpu_exporter/blob/v1.16.0/docs/CONFIGURE.md#remote-scraping),
-with `scripts/ssh_smi.py` as the remote `nvidia-smi` command and `--collect.compute-apps`
-enabled. The Python service additionally runs `ps` over the same SSH connection to add
-owner, CPU mean, command line and uptime for each GPU process. Reused SSH connections use
-app-private control sockets under `.runtime/`; your own terminal sessions and keys are
-untouched (keys stay with OpenSSH and are never copied).
+GPU utilization defaults to **NVML buffered samples**. A standard-library-only Python
+helper runs on each Linux GPU host through one persistent SSH channel. It reads
+`nvmlDeviceGetSamples()` once per second using a timestamp cursor, retrieving the
+samples between reads rather than only the latest value. No remote files, packages
+or services are installed; remote Python 3, `ctypes` and `libnvidia-ml.so.1` are needed.
+The helper exits when the SSH channel closes. Missing support or a stale stream
+falls back automatically to the original exporter value, with a visible warning.
+Set `"utilization_backend": "exporter"` to disable the helper entirely.
+
+Cards show latest utilization plus a **30-second time-weighted mean, peak and coverage**.
+Coverage is the fraction of the full window with known driver-sample intervals;
+startup and lost intervals remain unknown, not zero. Means exclude unknown time.
+Driver intervals longer than 1.5 seconds are treated as gaps. Trends use the mean
+over each collection interval when NVML is available. Buffers and windows are held
+in memory only. Sampling remains limited by the driver's native resolution.
+
+Other GPU metrics and compute-process lists still come from the official
+[nvidia_gpu_exporter](https://github.com/utkuozdemir/nvidia_gpu_exporter) v1.16.0 via
+[remote scraping](https://github.com/utkuozdemir/nvidia_gpu_exporter/blob/v1.16.0/docs/CONFIGURE.md#remote-scraping).
+`scripts/ssh_smi.py` forwards its command over SSH with `--collect.compute-apps` enabled.
+The Python service runs `ps` to add owner, CPU mean, command line and uptime. This is
+a hybrid collector: exporter queries still run, so NVML adds a small persistent
+process rather than eliminating all `nvidia-smi` invocations. Exporter and `ps` reuse app-private SSH control sockets under `.runtime/`.
+The NVML stream has a separate persistent transport, so a stalled stream cannot
+block its exporter fallback. Keys stay with OpenSSH.
+
+See [the NVML live-test report](docs/NVML_TEST_REPORT.md) for measurements and limitations.
 
 The exporter archive is downloaded on first start from the official GitHub release with a
 SHA-256 check (`scripts/bootstrap.py`) into the private, untracked `.tools/` directory.

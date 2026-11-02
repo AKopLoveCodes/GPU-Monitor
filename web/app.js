@@ -78,6 +78,13 @@ function renderNav() {
   document.querySelector('[data-server="all"]').classList.toggle('selected', state.server === 'all');
   $('#breadcrumb-title').textContent = state.server === 'all' ? t('topbar.overview') : state.server;
 }
+function utilizationSummary(gpu) {
+  const window = gpu.utilization_window;
+  if (gpu.utilization_source !== 'nvml_samples' || !window || window.mean == null) {
+    return `<div class="util-window muted">${esc(t('card.util_snapshot'))}</div>`;
+  }
+  return `<div class="util-window" title="${esc(t('card.util_coverage_hint'))}"><span>${esc(t('card.util_mean', {value: num(window.mean * 100, 1)}))}</span><span>${esc(t('card.util_peak', {value: num(pct(window.peak))}))}</span><span>${esc(t('card.util_coverage', {value: num(window.coverage * 100)}))}</span></div>`;
+}
 function gpuCard(gpu, server) {
   const status = gpuStatus(gpu, server), usedPct = gpu.memory_total_bytes ? gpu.memory_used_bytes / gpu.memory_total_bytes * 100 : 0;
   const minutes = Math.round(state.data.history_seconds / 60);
@@ -87,7 +94,8 @@ function gpuCard(gpu, server) {
     <div class="card-primary"><span>${esc(t('card.free_mem'))}</span><div><strong>${gib(gpu.memory_free_bytes)}</strong><small>GiB</small></div></div>
     <div class="memory-heading"><span>${esc(t('card.mem_used'))}</span><span><b>${gib(gpu.memory_used_bytes)}</b> / ${gib(gpu.memory_total_bytes)} GiB</span></div>
     <div class="memory-track"><span style="width:${Math.max(0, Math.min(100, usedPct))}%"></span></div>
-    <div class="card-metrics"><div><span>${esc(t('card.util'))}</span><strong>${num(pct(gpu.utilization_gpu))}<small>%</small></strong></div><div><span>${esc(t('card.temp'))}</span><strong>${num(gpu.temperature_c)}<small>°C</small></strong></div><div><span>${esc(t('card.power'))}</span><strong>${num(gpu.power_watts)}<small>W</small></strong></div></div>
+    <div class="card-metrics"><div><span title="${esc(t('card.util_latest'))}">${esc(t('card.util'))}</span><strong>${num(pct(gpu.utilization_gpu))}<small>%</small></strong></div><div><span>${esc(t('card.temp'))}</span><strong>${num(gpu.temperature_c)}<small>°C</small></strong></div><div><span>${esc(t('card.power'))}</span><strong>${num(gpu.power_watts)}<small>W</small></strong></div></div>
+    ${utilizationSummary(gpu)}
     ${sparkline(gpu)}
     <div class="card-bottom"><span>${esc(t('card.trend', {minutes}))}</span><span>${gpu.processes_available ? esc(t('card.processes', {count: num(gpu.process_count)})) : esc(t('card.processes_unknown'))} <span class="card-chevron">→</span></span></div>
   </article>`;
@@ -124,7 +132,8 @@ function renderDetail() {
   const minutes = Math.round(state.data.history_seconds / 60);
   $('#dialog-title').textContent = `${server.name} · GPU ${gpu.index}`;
   $('#dialog-body').innerHTML = `<div class="detail-subtitle">${esc(gpu.name)} <span class="status-tag ${status.key}">${status.label}</span></div><div class="detail-stats"><div><span>${esc(t('detail.free_mem'))}</span><strong>${gib(gpu.memory_free_bytes)} <small>GiB</small></strong></div><div><span>${esc(t('detail.util'))}</span><strong>${num(pct(gpu.utilization_gpu))}<small>%</small></strong></div><div><span>${esc(t('detail.temp_power'))}</span><strong>${num(gpu.temperature_c)}<small>°C / ${num(gpu.power_watts)} W</small></strong></div></div>
-    <div class="detail-chart"><div><h3>${esc(t('detail.trend_title'))}</h3><span class="chart-legend"><i></i>${esc(t('detail.legend_util'))} <i></i>${esc(t('detail.legend_mem'))}</span></div>${sparkline(gpu,true)}<div class="chart-labels"><span>${esc(t('detail.ago', {minutes}))}</span><span>${esc(t('detail.now'))}</span></div></div>
+    ${utilizationSummary(gpu)}
+    <div class="detail-chart"><div><h3>${esc(t('detail.trend_title'))}</h3><span class="chart-legend"><i></i>${esc(t(gpu.utilization_source === 'nvml_samples' ? 'detail.legend_util_interval' : 'detail.legend_util'))} <i></i>${esc(t('detail.legend_mem'))}</span></div>${sparkline(gpu,true)}<div class="chart-labels"><span>${esc(t('detail.ago', {minutes}))}</span><span>${esc(t('detail.now'))}</span></div></div>
     <dl class="gpu-info"><dt>${esc(t('detail.uuid'))}</dt><dd class="mono">${esc(gpu.uuid)}</dd><dt>${esc(t('detail.driver'))}</dt><dd>${esc(gpu.driver_version)} / ${esc(gpu.cuda_version)}</dd><dt>${esc(t('detail.mem'))}</dt><dd>${gib(gpu.memory_used_bytes)} / ${gib(gpu.memory_total_bytes)} GiB</dd><dt>${esc(t('detail.mem_util'))}</dt><dd>${num(pct(gpu.utilization_memory))}%</dd><dt>${esc(t('detail.fan'))}</dt><dd>${num(pct(gpu.fan_ratio))}% / ${num(gpu.power_limit_watts)} W</dd></dl>
     <div class="detail-processes"><h3>${gpu.processes_available ? esc(t('detail.processes', {count: num(gpu.process_count)})) : esc(t('detail.processes_unknown'))}</h3>${gpu.processes.map(proc => `<div><span>${esc(proc.user)} <code>PID ${proc.pid}</code> <b>${Number.isFinite(proc.memory_bytes) ? num(proc.memory_bytes / MiB) + ' MiB' : '—'}</b></span><p>${esc(proc.command ?? proc.name)}</p></div>`).join('') || `<p>${esc(t('detail.no_processes'))}</p>`}</div>
     <div class="detail-copy"><p>${esc(t('detail.copy_hint_pre'))}<code>ssh ${esc(server.ssh_host)}</code>${esc(t('detail.copy_hint_post'))}</p><button class="copy-code" id="copy-detail" ${fresh(server) ? '' : 'disabled'}><code>CUDA_VISIBLE_DEVICES=${gpu.index} python your_script.py</code><span>⧉</span></button><small>${esc(t('detail.copy_note'))}</small></div>`;

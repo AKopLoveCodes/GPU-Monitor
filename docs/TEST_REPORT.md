@@ -1,5 +1,7 @@
 # 实测记录（Test record）
 
+2026-11-02 增加 NVML 历史利用率采集，最新试验见 [NVML 测试报告](NVML_TEST_REPORT.md)。下文保留原版 exporter 采集的历史实测记录。
+
 测试日期：2026-11-01，America/Los_Angeles。测试环境：本机 macOS / Apple Silicon、Python 3.9.6、官方 nvidia_gpu_exporter 1.16.0 darwin/amd64（经现有 Rosetta 运行）。
 
 文中服务器名均为化名（`gpu-01`、`gpu-02`），进程用户为示例用户名；原始记录中的真实别名与用户名未公开。

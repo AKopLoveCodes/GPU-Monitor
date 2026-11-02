@@ -22,6 +22,7 @@ import urllib.request
 
 from scripts.bootstrap import exporter_path
 from scripts.ssh_smi import ssh_options
+from scripts.nvml_history import NvmlHistory
 
 ROOT = Path(__file__).resolve().parent
 FIELDS = "index,uuid,name,driver_version,memory.total,memory.used,memory.free,utilization.gpu,utilization.memory,temperature.gpu,power.draw,power.limit,fan.speed"
@@ -146,6 +147,8 @@ class HostMonitor:
         self.process = None
         self.log = None
         self.control = control_socket_path(runtime, config["name"])
+        self.nvml = (NvmlHistory(config["ssh_host"], self.control, runtime, stop_event)
+                     if settings.get("utilization_backend", "nvml") == "nvml" else None)
         # exporter_port is accepted only for backwards-compatible existing
         # configurations. New configurations let the application allocate it.
         self.exporter_port = config.get("exporter_port")
@@ -255,17 +258,34 @@ class HostMonitor:
                 warning_code, warning = partial
         except (OSError, subprocess.TimeoutExpired, MonitorError):
             warning_code, warning = "process_details_unavailable", "process owners and commands are temporarily unavailable; GPU metrics are unaffected"
+        nvml_missing = False
         for gpu in gpus:
-            self.history[gpu["uuid"]].append({"at": collected_at, "utilization": gpu.get("utilization_gpu"),
+            gpu["utilization_gpu_exporter"] = gpu.get("utilization_gpu")
+            gpu["utilization_source"] = "exporter"
+            gpu["utilization_window"] = None
+            nvml = self.nvml.snapshot(gpu["uuid"], self.settings["interval_seconds"]) if self.nvml else None
+            if nvml:
+                gpu.update(utilization_gpu=nvml["latest"], utilization_source="nvml_samples",
+                           utilization_window=nvml["window"], utilization_interval=nvml["interval"],
+                           utilization_sample_age_seconds=nvml["sample_age_seconds"])
+            elif self.nvml:
+                nvml_missing = True
+            trend_util = nvml["interval"]["mean"] if nvml else gpu.get("utilization_gpu")
+            self.history[gpu["uuid"]].append({"at": collected_at, "utilization": trend_util,
                                                "memory_used_bytes": gpu.get("memory_used_bytes")})
             gpu["history"] = list(self.history[gpu["uuid"]])
+        if nvml_missing and warning_code is None:
+            warning_code, warning = "nvml_fallback", "NVML history unavailable for some GPUs; using exporter utilization"
         with self.lock:
             self.raw_metrics = body
             self.state.update(status="online", error=None, error_code=None, warning=warning, warning_code=warning_code,
                               last_success=collected_at,
+                              nvml_collector=self.nvml.diagnostics() if self.nvml else None,
                               collection_seconds=scalars.get("nvidia_smi_last_collect_duration_seconds"), gpus=gpus)
 
     def run(self):
+        if self.nvml:
+            self.nvml.start()
         while not self.stop.is_set():
             started = time.monotonic()
             try:
@@ -277,6 +297,8 @@ class HostMonitor:
             self.stop.wait(max(.2, self.settings["interval_seconds"] - (time.monotonic() - started)))
 
     def close(self):
+        if self.nvml:
+            self.nvml.close()
         self.stop_exporter()
         try:
             subprocess.run(["ssh", "-o", "ControlPath=" + self.control, "-O", "exit", self.config["ssh_host"]],
@@ -298,6 +320,8 @@ def load_config(path):
         raise ValueError("config.json is missing keys: " + ", ".join(missing) + " (see config.example.json)")
     if settings["listen"] != "127.0.0.1":
         raise ValueError("this dashboard only supports listening on 127.0.0.1")
+    if settings.setdefault("utilization_backend", "nvml") not in ("nvml", "exporter"):
+        raise ValueError("utilization_backend must be nvml or exporter")
     integer_settings = {"port": (1024, 65535), "interval_seconds": (1, None),
                         "collection_timeout_seconds": (1, 30), "history_points": (2, 1200)}
     for key, (minimum, maximum) in integer_settings.items():

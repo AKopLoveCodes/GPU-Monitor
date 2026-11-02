@@ -1,0 +1,102 @@
+# NVML 历史采样试验
+
+日期：2026-11-02，America/Los_Angeles。原仓库基线为 `156718b`，已保存标签
+`codex/pre-nvml-history-20261102`；改动位于 `codex/nvml-history`。
+原私有配置另存于不入库的 `.runtime/pre-nvml-config.json`。
+以下服务器以 gpu-01 / gpu-02 代称，均为 8 × RTX 4090。
+
+## 实现与数据语义
+
+- 默认 `utilization_backend=nvml`。每台服务器通过独立常驻 SSH 连接运行
+  `scripts/nvml_stream.py` 的源码，不安装远端文件、软件包或系统服务。
+- 使用系统 Python 3 的 `ctypes` 调用 `libnvidia-ml.so.1`，每秒按时间戳游标读取
+  `nvmlDeviceGetSamples(NVML_GPU_UTILIZATION_SAMPLES)`，本机按 UUID 去重。
+  本次设备原生样本约每 200 ms 一次，驱动缓冲区约 14 秒。
+- 卡片保留最新值，新增近 30 秒时间加权均值、峰值、覆盖率。
+  样本值代表其时间戳之前的采样区间，按相邻时间戳差加权；窗口边缘裁剪。
+  大于 1.5 秒的间隔视为未知。均值分母为已覆盖时间，覆盖率分母为完整 30 秒；
+  没有覆盖时均值和峰值为 `null`，不能将缺口补成 0。
+- 趋势采用每个采集间隔内的时间加权均值，不仅记录最后一个样本。
+- 显存、温度、功耗和计算进程列表仍由 exporter 提供，`ps` 补充进程详情。
+  API 额外保留 `utilization_gpu_exporter`，便于与原路径对照。
+- NVML 进程退出、流过期、设备不支持时自动回退到 exporter，并显示提示；
+  后台重连后自动恢复历史采样。无数据流的连接会由超时看门狗回收。
+- NVML 使用独立传输，exporter / ps 继续复用应用专用 ControlPath，避免一个
+  卡住的连接同时阻塞主采集与回退。未开放新的远端监听端口。
+
+## 实测结果
+
+`python3 tests/manual/check_nvml_live.py --seconds 65`：通过。
+
+| 项目 | gpu-01 | gpu-02 |
+| --- | ---: | ---: |
+| GPU 数量 | 8 | 8 |
+| 每卡观察到的有效网页更新 | 20 | 21 |
+| 每卡使用 NVML 的更新 | 20 | 21 |
+| 各卡最高 30 秒窗口覆盖率 | 99.50%–99.98% | 99.65%–99.99% |
+| 辅助进程 CPU，单核百分比 | 1.52% | 1.65% |
+| 辅助进程峰值 RSS | 30.29 MiB | 27.49 MiB |
+| 一轮 8 卡查询最长耗时 | 26.07 ms | 20.89 ms |
+
+CPU 根据辅助进程 `getrusage` 在观察期间的差值计算，内存为其峰值 RSS。
+上述开销不包括 SSH、原有 exporter 和本机后端，也不是应用吞吐量回归测试。
+这 65 秒自然负载均为 0，没有把“显存已占用”解释为“正在计算”。
+
+`python3 tests/manual/check_live.py`：通过。16 张卡的编号、UUID、型号、显存容量
+与直接 SSH 查询一致；进程用户和命令可读，网页 API 自动更新，静态资源正常。
+
+### 短负载验证
+
+`tests/manual/check_nvml_burst.py` 必须显式指定主机和 GPU。启动前再次检查
+目标卡显存小于 100 MiB 且没有计算进程，通过 CUDA UUID 核对设备后，创建自己的
+临时 CUDA 上下文，用一个 block 执行约 0.4 秒的短计算，最后销毁上下文。
+本次选择 gpu-02 的空闲 GPU 1，没有操作其他计算进程。
+
+| 观测 | 结果 |
+| --- | ---: |
+| 实际测试计算时长 | 0.4003 秒 |
+| 结束后的 exporter 单点利用率 | 0% |
+| 同时的 30 秒历史峰值 | 99% |
+| 同时的 30 秒历史均值 | 1.35% |
+| 窗口覆盖率 / 有效区间数 | 99.60% / 150 |
+| 上下文退出后的显存 / 计算进程数 | 3 MiB / 0 |
+
+验证了单点恢复为 0 后，短时活动仍能在历史窗口中保留。没有据此声称原路径的
+每一次采集都漏掉了这个任务；“脉冲完全落在两次采集之间”的情况另由确定性
+单元测试验证，历史窗口仍保留其峰值和非零均值。
+
+### 中断与卡住后的恢复
+
+`python3 tests/manual/check_nvml_recovery.py` 与 `--stall` 均通过。
+测试只操作本应用自己的本地 SSH 子进程。
+
+- 断开 NVML SSH 子进程后，GPU 基础指标继续在线，利用率切换到 exporter，
+  约十余秒后重新使用 NVML 历史样本。
+- 暂停 NVML SSH 子进程后，约 6.1 秒观测到 exporter 回退，约 24.9 秒恢复 NVML。
+  看门狗回收卡住的子进程，不依赖手动恢复；另一台服务器持续在线。
+- 初次暂停试验使用共享 SSH transport，暂停客户端未停止 master 转发，未能
+  触发预期场景。最终改为独立 NVML 传输，重新测试通过。
+
+## 自动化与页面验证
+
+`python3 -m unittest discover -s tests -q`：28 项通过。
+新增验证短脉冲捕获、时间加权与窗口边缘、缺口不补零、去重、过期、不同设备
+支持程度、NVML 主路径 / exporter 回退、历史趋势与配置兼容性。
+
+`node tests/test_ui_logic.cjs`：通过。包括窗口值展示、回退文案、中英词典与原有
+可用性判断。真实浏览器显示 16 张卡的窗口指标，详情中显示采集间隔平均趋势，
+没有水平溢出或控制台警告 / 错误。
+
+私有原始结果保存在 `.runtime/nvml-live.json`、`nvml-burst.json`、
+`nvml-recovery.json` 和 `nvml-recovery-stall.json`，不入库。
+
+## 限制与回退
+
+这是混合采集，仍执行原有 `nvidia-smi` 查询；收益是较完整的短时利用率历史，
+不是承诺减少总进程数或完全消除监控开销。驱动分辨率以下的极短任务、有限
+缓冲区之外的断线数据仍可能丢失；GPU busy 比例也不等于 SM / Tensor 算力效率。
+30 秒窗口与趋势只驻留内存，重启后会重新预热。
+
+回退到原行为：将私有 `config.json` 中 `utilization_backend` 改为 `exporter`，
+然后依次执行 `python3 scripts/manage.py stop`、`python3 scripts/manage.py start`。
+基线标签也保留了修改前的完整版本。

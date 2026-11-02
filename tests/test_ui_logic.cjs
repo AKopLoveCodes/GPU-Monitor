@@ -47,6 +47,10 @@ vm.runInContext(`
   assert.equal(matches(freeGpu),false,'The own-user filter needs a matching process owner');
   assert.equal(matches({...freeGpu,processes:[{user:'demo'}]}),true,'Own-user filter matches configured users only');
   assert.equal(esc('<img onerror="x">'), '&lt;img onerror=&quot;x&quot;&gt;');
+  const summary = utilizationSummary({utilization_source:'nvml_samples',utilization_window:{mean:.0135,peak:.99,coverage:.996}});
+  assert.ok(summary.includes('1.4%') && summary.includes('99%') && summary.includes('100%'),'History preserves a pulse after latest utilization returns to zero');
+  assert.ok(utilizationSummary({utilization_source:'exporter'}).includes(t('card.util_snapshot')),'Fallback is explicitly labeled as a point sample');
+
 `, Object.assign(context, {assert}));
 
 // Localization: default language, switch, and dictionary parity

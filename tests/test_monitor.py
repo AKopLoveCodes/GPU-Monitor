@@ -69,7 +69,7 @@ class WorkerTests(unittest.TestCase):
     def test_failure_marks_old_data_stale_and_recovery_clears_error(self):
         with tempfile.TemporaryDirectory() as directory:
             config = {'name': 'Test', 'ssh_host': 'Test', 'exporter_port': 19000}
-            settings = {'interval_seconds': 3, 'collection_timeout_seconds': 10, 'history_points': 2}
+            settings = {'interval_seconds': 3, 'collection_timeout_seconds': 10, 'history_points': 2, 'utilization_backend': 'exporter'}
             stop = threading.Event()
             monitor = HostMonitor(config, settings, Path(directory), stop)
             monitor.state.update(status='online', last_success=100, gpus=[{'index': 0}])

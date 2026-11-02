@@ -4,6 +4,7 @@
   "interval_seconds": 3,
   "collection_timeout_seconds": 10,
   "history_points": 100,
+  "utilization_backend": "nvml",
   "own_users": ["your-unix-username"],
   "servers": [
     {"name": "gpu-01", "ssh_host": "gpu-01"},
