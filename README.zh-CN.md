@@ -12,6 +12,25 @@
 - **GPU 服务器**：Linux、NVIDIA 驱动、`nvidia-smi`、标准 `ps`。历史采样还需要带有 `ctypes` 的 Python 3。
 - **SSH**：使用密钥免密登录，在 `~/.ssh/config` 中配置服务器别名。先连接每台服务器一次，核验主机指纹，并确认 `ssh gpu-01 nvidia-smi` 无需输入密码即可运行。
 
+## SSH 配置示例
+
+请把连接细节写在 OpenSSH 配置中，而不是塞进 `config.json`。这样既保留了本项目严格的主机名校验，也可支持非默认端口、跳板机和私钥：
+
+```sshconfig
+Host gpu-01
+  HostName 10.20.30.40
+  User researcher
+  Port 2201
+  IdentityFile ~/.ssh/id_ed25519_lab
+  ProxyJump bastion.example.edu
+
+Host bastion.example.edu
+  User researcher
+  IdentityFile ~/.ssh/id_ed25519_lab
+```
+
+如需 VPN，请先连接 VPN；之后只把别名（如 `gpu-01`）交给 `gpu-monitor`，不要在 `config.json` 中写 `-o`、`ProxyCommand` 或密码。
+
 ## 快速开始
 
 在仓库目录运行：
@@ -32,6 +51,15 @@ python3 scripts/manage.py start --open
 
 macOS 也可双击 **Start.command** / **Stop.command** 启停。关闭网页不会停止采集；重启电脑后需要重新启动应用。
 
+如需在可编辑虚拟环境中安装命令入口：
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e .
+gpu-monitor doctor
+```
+
 ## 配置与使用
 
 编辑初始化生成的 `config.json`，重启后生效。将 `own_users` 设为 `["你的用户名"]`，即可使用“只看我使用的 GPU”筛选。端口、采集间隔等设置见 [config.example.json](config.example.json)。语言和主题在右上角“外观设置”中切换。
@@ -47,3 +75,5 @@ macOS 也可双击 **Start.command** / **Stop.command** 启停。关闭网页不
 ## 许可证
 
 [MIT](LICENSE)。GPU 指标使用 [nvidia_gpu_exporter](https://github.com/utkuozdemir/nvidia_gpu_exporter)，第三方署名见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+
+准备公开版本时可参考[变更记录](CHANGELOG.md)、[引用元数据](CITATION.cff)和[发布清单](docs/RELEASING.md)。

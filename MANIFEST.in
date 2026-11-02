@@ -1,0 +1,8 @@
+include LICENSE README.md README.zh-CN.md CHANGELOG.md CITATION.cff THIRD-PARTY-NOTICES.md config.example.json pyproject.toml setup.py
+recursive-include scripts *.py
+recursive-include web *.css *.html *.js *.svg
+recursive-include docs RELEASING.md
+prune .runtime
+prune .tools
+exclude config.json
+global-exclude __pycache__ *.py[cod]

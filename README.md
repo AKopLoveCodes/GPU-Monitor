@@ -19,6 +19,28 @@ no server packages or services need to be installed.
   Connect once to verify each host key and confirm that
   `ssh gpu-01 nvidia-smi` works without a password prompt.
 
+## SSH config example
+
+Keep connection details in OpenSSH configuration rather than putting options into
+`config.json`. This preserves the dashboard's strict host-name validation while supporting
+non-default ports, a jump host and private keys:
+
+```sshconfig
+Host gpu-01
+  HostName 10.20.30.40
+  User researcher
+  Port 2201
+  IdentityFile ~/.ssh/id_ed25519_lab
+  ProxyJump bastion.example.edu
+
+Host bastion.example.edu
+  User researcher
+  IdentityFile ~/.ssh/id_ed25519_lab
+```
+
+Connect any required VPN before starting. Then use only the alias (`gpu-01`) with
+`gpu-monitor`; never place `-o`, `ProxyCommand` or a password in `config.json`.
+
 ## Quick start
 
 Run from the repository directory:
@@ -43,6 +65,15 @@ The first start downloads the GPU exporter and opens the dashboard, usually at
 On macOS, you can also double-click **Start.command** / **Stop.command**.
 Closing the browser does not stop monitoring. Start the app again after rebooting.
 
+For an optional command entry within an editable virtual environment:
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e .
+gpu-monitor doctor
+```
+
 ## Configuration and usage
 
 Edit the generated `config.json` and restart to apply changes. Set `own_users` to
@@ -66,3 +97,6 @@ VPN and keys. Logs are in `.runtime/`.
 
 [MIT](LICENSE). GPU metrics use [nvidia_gpu_exporter](https://github.com/utkuozdemir/nvidia_gpu_exporter);
 see [third-party notices](THIRD-PARTY-NOTICES.md).
+
+See the [changelog](CHANGELOG.md), [citation metadata](CITATION.cff) and
+[release checklist](docs/RELEASING.md) when preparing a public version.
