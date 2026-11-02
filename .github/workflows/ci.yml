@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Python unit tests
+        run: python3 -m unittest discover -s tests -v
+      - name: UI logic and i18n parity
+        run: node tests/test_ui_logic.cjs
+      - name: Syntax check every Python entry point
+        run: python3 -c "import ast; [ast.parse(open(f).read(), f) for f in ['server.py', 'scripts/bootstrap.py', 'scripts/manage.py', 'scripts/mock_demo.py', 'scripts/ssh_smi.py']]"

@@ -1,0 +1,23 @@
+# macOS / editor noise
+.DS_Store
+
+# Per-machine configuration; commit config.example.json instead
+/config.json
+
+# Local runtime state: logs, PID/lock files, SSH control sockets
+.runtime/
+
+# Downloaded official exporter binary and its license (scripts/bootstrap.py)
+.tools/
+
+__pycache__/
+*.pyc
+
+# Optional user-supplied wallpapers; see README "Appearance"
+web/assets/*.jpg
+web/assets/*.jpeg
+web/assets/*.png
+web/assets/*.webp
+
+# Local Claude Code settings (launch.json is committed for the mock preview)
+.claude/settings*.json

@@ -1,0 +1,12 @@
+{
+  "listen": "127.0.0.1",
+  "port": 8765,
+  "interval_seconds": 3,
+  "collection_timeout_seconds": 10,
+  "history_points": 100,
+  "own_users": ["your-unix-username"],
+  "servers": [
+    {"name": "gpu-01", "ssh_host": "gpu-01", "exporter_port": 19835},
+    {"name": "gpu-02", "ssh_host": "gpu-02", "exporter_port": 19836}
+  ]
+}

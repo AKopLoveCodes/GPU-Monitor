@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "gpu-monitor-mock",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["scripts/mock_demo.py"],
+      "port": 8799
+    }
+  ]
+}
