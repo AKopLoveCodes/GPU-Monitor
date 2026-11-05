@@ -10,6 +10,13 @@
 # Downloaded official exporter binary and its license (scripts/bootstrap.py)
 .tools/
 
+# Locally generated reports and application materials
+/output/
+
+# Local review and test reports (keep files locally, outside version control)
+/docs/*REPORT*.md
+/docs/*report*.md
+
 __pycache__/
 *.pyc
 
