@@ -81,10 +81,12 @@ class WindowTests(unittest.TestCase):
             self.assertEqual(history.snapshot('abc')['window']['peak'], .8)
         with patch('scripts.nvml_history.time.monotonic', return_value=14):
             self.assertIsNone(history.snapshot('abc'))
-        history.ingest({'at': 101, 'gpus': [{'uuid': 'abc', 'error': 'unsupported'}]})
-        self.assertIsNone(history.snapshot('abc'))
-        history.ingest(payload)
-        self.assertIsNotNone(history.snapshot('abc'))
+        with patch('scripts.nvml_history.time.monotonic', return_value=15):
+            history.ingest({'at': 105, 'gpus': [{'uuid': 'abc', 'error': 'unsupported'}]})
+            self.assertIsNone(history.snapshot('abc'))
+        with patch('scripts.nvml_history.time.monotonic', return_value=16):
+            history.ingest({'at': 106, 'gpus': [{'uuid': 'abc', 'samples': [[105, 0], [106, .8]]}]})
+            self.assertIsNotNone(history.snapshot('abc'))
 
 
 class IntegrationTests(unittest.TestCase):
