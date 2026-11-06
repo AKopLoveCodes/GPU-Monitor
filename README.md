@@ -81,6 +81,18 @@ Edit the generated `config.json` and restart to apply changes. Set `own_users` t
 collection interval, are in [config.example.json](config.example.json).
 Switch language and theme in the **Appearance** menu.
 
+Trend means cover the actual elapsed time between successful updates. All utilization
+samples, including fallback point samples, are connected with a solid line.
+See the GPU card for the current source and 30-second window coverage. Missing data stays unknown. Individual device errors are isolated;
+device handles refresh every 10 seconds, with NVML reinitialization after driver
+or handle failures.
+
+GPU utilization measures time spent executing kernels, rather than SM/Tensor
+compute efficiency. Tasks shorter than the driver sampling resolution and data
+outside its finite buffer may still be missed. About 65 seconds of raw samples
+are retained locally; older gaps reduce coverage. Unsupported metrics (including
+on MIG devices) are labeled explicitly and cannot establish that a GPU is idle.
+
 “Idle” means no compute processes, at most 512 MiB used memory and at most 10%
 utilization. The 30-second mean / peak and trends show recent activity; coverage
 indicates sample availability. Trends reset on restart. The app does not reserve GPUs.

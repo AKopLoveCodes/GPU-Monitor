@@ -44,6 +44,8 @@ class NvmlHistory:
         self.samples = {}
         self.available = set()
         self.remote_at = self.received_at = None
+        self.remote_offset = None
+        self.device_errors = {}
         self.stats = {}
 
     def start(self):
@@ -56,10 +58,23 @@ class NvmlHistory:
         if not math.isfinite(at):
             raise ValueError("invalid stream timestamp")
         with self.lock:
+            received = time.monotonic()
+            if self.remote_at is not None and at < self.remote_at - 1:
+                # A remote wall-clock step invalidates both timestamp cursors
+                # and the clock mapping, not the local monotonic clock.
+                self.samples.clear()
+                self.remote_offset = None
+            offset = at - received
+            self.remote_offset = max(offset, self.remote_offset if self.remote_offset is not None else offset)
             available = set()
+            errors = {}
             for gpu in payload["gpus"]:
-                uuid = gpu["uuid"]
+                uuid = gpu.get("uuid")
+                if uuid is None:
+                    continue  # A device may fail before its UUID can be read.
                 if "error" in gpu:
+                    errors[uuid] = {"status": "unsupported" if gpu.get("error_code") == 3 else "unavailable",
+                                    "error": gpu["error"], "error_code": gpu.get("error_code")}
                     continue
                 points = self.samples.setdefault(uuid, deque(maxlen=4000))
                 for timestamp, value in gpu["samples"]:
@@ -73,26 +88,36 @@ class NvmlHistory:
                     points.popleft()
                 available.add(uuid)
             self.available = available
-            self.remote_at, self.received_at = at, time.monotonic()
+            self.device_errors = errors
+            self.remote_at, self.received_at = at, received
             self.stats = payload.get("collector", {})
 
-    def snapshot(self, uuid, interval=3):
+    def snapshot(self, uuid, interval=3, now=None):
         with self.lock:
-            if (self.received_at is None or time.monotonic() - self.received_at > 3.5
+            now = time.monotonic() if now is None else now
+            if (self.received_at is None or now - self.received_at > 3.5
                     or uuid not in self.available):
                 return None
             points = list(self.samples.get(uuid, ()))
-            end = self.remote_at
+            # Advance even when no new frame arrives. Retain the best clock
+            # mapping so delayed/replayed SSH frames cannot refresh old data.
+            end = now + self.remote_offset
+            if end - self.remote_at > 3.5:
+                return None
         if not points or not 0 <= end - points[-1][0] <= 3:
             return None
         return {"latest": points[-1][1], "window": summarize(points, end, 30),
                 "interval": summarize(points, end, interval),
                 "sample_age_seconds": end - points[-1][0]}
 
+    def device_status(self, uuid):
+        with self.lock:
+            return dict(self.device_errors.get(uuid, {"status": "unavailable"}))
+
     def diagnostics(self):
         with self.lock:
             return dict(self.stats, stream_age_seconds=(time.monotonic() - self.received_at
-                        if self.received_at is not None else None))
+                        if self.received_at is not None else None), device_errors=dict(self.device_errors))
 
     def _run(self):
         source = Path(__file__).with_name("nvml_stream.py").read_text()

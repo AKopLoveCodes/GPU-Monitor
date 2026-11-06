@@ -256,9 +256,10 @@ dialog::backdrop { background: #11111180; backdrop-filter: blur(3px); }
 .detail-chart { padding: 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--subtle); }
 .detail-chart > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 15px; }
 .detail-chart h3, .detail-processes h3 { margin: 0; font-size: 16px; font-weight: 600; }
-.chart-legend { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 13px; white-space: nowrap; }
-.chart-legend i { width: 12px; height: 2px; margin-left: 9px; background: var(--green); }
-.chart-legend i:last-child { background: var(--purple); }
+.chart-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 12px; color: var(--muted); font-size: 13px; }
+.chart-legend > span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.chart-legend i { width: 12px; height: 2px; flex-shrink: 0; background: var(--green); }
+.chart-legend i.memory { background: var(--purple); }
 .sparkline.large { height: 130px; margin-top: 18px; }
 .chart-labels { display: flex; justify-content: space-between; margin-top: 6px; color: var(--faint); font: 13px var(--mono); }
 .gpu-info { display: grid; grid-template-columns: 150px 1fr; gap: 12px; margin: 25px 0; font-size: 14px; }

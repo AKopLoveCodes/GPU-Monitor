@@ -50,6 +50,29 @@ vm.runInContext(`
   const summary = utilizationSummary({utilization_source:'nvml_samples',utilization_window:{mean:.0135,peak:.99,coverage:.996}});
   assert.ok(summary.includes('1.4%') && summary.includes('99%') && summary.includes('100%'),'History preserves a pulse after latest utilization returns to zero');
   assert.ok(utilizationSummary({utilization_source:'exporter'}).includes(t('card.util_snapshot')),'Fallback is explicitly labeled as a point sample');
+  for (const status of ['unsupported', 'unavailable']) {
+    const gpu = {...freeGpu, utilization_gpu:null, utilization_status:status};
+    assert.equal(idle(gpu),false,'Missing utilization is never idle');
+    assert.equal(gpuStatus(gpu,{status:'online',last_success:Date.now()/1000}).key,'unknown');
+    assert.ok(utilizationSummary(gpu).includes(t('card.util_' + status)));
+  }
+  assert.ok(utilizationSummary({utilization_source:'exporter',utilization_history_status:'unsupported',utilization_status:'available'}).includes(t('card.util_history_unsupported')));
+  assert.ok(utilizationSummary({utilization_source:'nvml_samples',utilization_window:{mean:null,coverage:0}}).includes(t('card.util_warming')));
+  const chartNow = Date.now()/1000;
+  const mixedHistory = [
+    {at:chartNow-9,utilization:.8,utilization_source:'nvml_samples',utilization_start:chartNow-12,utilization_end:chartNow-9,utilization_coverage:1},
+    {at:chartNow-6,utilization:0,utilization_source:'exporter',utilization_start:chartNow-6,utilization_end:chartNow-6,utilization_coverage:null},
+    {at:chartNow-3,utilization:.4,utilization_source:'nvml_samples',utilization_start:chartNow-6,utilization_end:chartNow-3,utilization_coverage:.5}
+  ];
+  const mixedChart = sparkline({history:mixedHistory,utilization_source:'nvml_samples'});
+  const utilPath = mixedChart.match(/class="util-line" d="([^"]*)"/)[1];
+  assert.equal((utilPath.match(/L/g) ?? []).length,2,'Mixed sources and partial coverage use one connected solid line');
+  assert.ok(!mixedChart.includes('util-point') && !mixedChart.includes('partial'),'No dots or dashed utilization segments');
+  const unknownChart = sparkline({history:[{at:chartNow,utilization:null}]});
+  assert.ok(unknownChart.includes('class="util-line" d=""'),'Unknown utilization is not plotted as zero');
+  const gapChart = sparkline({history:[mixedHistory[0],{at:chartNow-6,utilization:null},mixedHistory[2]]});
+  const gapPath = gapChart.match(/class="util-line" d="([^"]*)"/)[1];
+  assert.equal((gapPath.match(/M/g) ?? []).length,2,'Missing data still breaks the line');
 
 `, Object.assign(context, {assert}));
 

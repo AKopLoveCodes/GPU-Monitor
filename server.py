@@ -154,6 +154,7 @@ class HostMonitor:
         self.exporter_port = config.get("exporter_port")
         self.auto_exporter_port = self.exporter_port is None
         self.history = defaultdict(lambda: deque(maxlen=settings["history_points"]))
+        self.last_trend_monotonic = None
         self.raw_metrics = ""
         self.state = {"name": config["name"], "ssh_host": config["ssh_host"], "status": "connecting",
                       "error": None, "error_code": None, "warning": None, "warning_code": None,
@@ -259,23 +260,43 @@ class HostMonitor:
         except (OSError, subprocess.TimeoutExpired, MonitorError):
             warning_code, warning = "process_details_unavailable", "process owners and commands are temporarily unavailable; GPU metrics are unaffected"
         nvml_missing = False
+        trend_now, trend_at = time.monotonic(), time.time()
+        interval = (trend_now - self.last_trend_monotonic if self.last_trend_monotonic is not None
+                    else self.settings["interval_seconds"])
+        interval = max(interval, .001)
         for gpu in gpus:
             gpu["utilization_gpu_exporter"] = gpu.get("utilization_gpu")
             gpu["utilization_source"] = "exporter"
             gpu["utilization_window"] = None
-            nvml = self.nvml.snapshot(gpu["uuid"], self.settings["interval_seconds"]) if self.nvml else None
+            gpu["utilization_interval"] = None
+            gpu["utilization_sample_age_seconds"] = None
+            gpu["utilization_history_status"] = "disabled" if self.nvml is None else "unavailable"
+            nvml = self.nvml.snapshot(gpu["uuid"], interval, now=trend_now) if self.nvml else None
             if nvml:
                 gpu.update(utilization_gpu=nvml["latest"], utilization_source="nvml_samples",
                            utilization_window=nvml["window"], utilization_interval=nvml["interval"],
+                           utilization_history_status="available",
                            utilization_sample_age_seconds=nvml["sample_age_seconds"])
             elif self.nvml:
                 nvml_missing = True
+                gpu["utilization_history_status"] = self.nvml.device_status(gpu["uuid"])["status"]
+            gpu["utilization_status"] = ("available" if gpu.get("utilization_gpu") is not None
+                                         else "unsupported" if gpu["utilization_history_status"] == "unsupported"
+                                         else "unavailable")
+            if gpu["utilization_status"] != "available":
+                gpu["utilization_source"] = "unavailable"
             trend_util = nvml["interval"]["mean"] if nvml else gpu.get("utilization_gpu")
-            self.history[gpu["uuid"]].append({"at": collected_at, "utilization": trend_util,
+            self.history[gpu["uuid"]].append({"at": trend_at, "utilization": trend_util,
+                                               "utilization_source": gpu["utilization_source"],
+                                               "utilization_start": trend_at - interval if nvml else collected_at,
+                                               "utilization_end": trend_at if nvml else collected_at,
+                                               "utilization_coverage": nvml["interval"]["coverage"] if nvml else None,
+                                               "utilization_status": gpu["utilization_status"],
                                                "memory_used_bytes": gpu.get("memory_used_bytes")})
             gpu["history"] = list(self.history[gpu["uuid"]])
+        self.last_trend_monotonic = trend_now
         if nvml_missing and warning_code is None:
-            warning_code, warning = "nvml_fallback", "NVML history unavailable for some GPUs; using exporter utilization"
+            warning_code, warning = "nvml_fallback", "NVML history unavailable for some GPUs; using exporter utilization where available"
         with self.lock:
             self.raw_metrics = body
             self.state.update(status="online", error=None, error_code=None, warning=warning, warning_code=warning_code,
