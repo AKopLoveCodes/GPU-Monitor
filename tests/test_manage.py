@@ -62,7 +62,7 @@ Host gpu-01
             settings = json.loads((root / 'config.json').read_text())
             self.assertEqual(settings['port'], 18765)
             self.assertEqual(settings['own_users'], ['demo'])
-            self.assertEqual(settings['servers'], [{'name': 'gpu-01', 'ssh_host': 'gpu-01'}])
+            self.assertEqual(settings['servers'], [{'name': 'gpu-01', 'ssh_host': 'gpu-01', 'own_users': ['demo']}])
 
     def test_init_add_merges_only_new_discovered_hosts(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -80,7 +80,7 @@ Host gpu-01
             self.assertEqual(settings['own_users'], ['first', 'second'])
             self.assertEqual(settings['servers'], [
                 {'name': 'gpu-01', 'ssh_host': 'gpu-01'},
-                {'name': 'gpu-02', 'ssh_host': 'gpu-02'},
+                {'name': 'gpu-02', 'ssh_host': 'gpu-02', 'own_users': ['second']},
             ])
 
 

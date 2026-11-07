@@ -1,10 +1,21 @@
 # GPU Monitor
 
-通过 SSH，在本地网页统一查看多台服务器的 NVIDIA GPU：查找空闲卡、查看进程和近期利用率。支持中英文和明暗主题。监控只读，无需在服务器上安装软件包或系统服务。
+通过 SSH，在本地网页统一查看多台服务器的 NVIDIA GPU：查找空闲卡、查看进程和近期利用率。支持中英文和明暗主题。实时监控只读，无需在服务器上安装软件包或系统服务；可选历史采集使用远端用户服务。
 
 [English](README.md)
 
 ![GPU Monitor 界面](docs/screenshot-zh-light.jpg)
+
+## 算力观察
+
+侧栏“算力观察”展示个人 GPU 用量、时间线、热力图与设备分布，可切换今天、近三天、近一周。可选远端轻量采集服务独立于本地 SSH 连接运行，分钟聚合保存在服务器，最多保留 168 小时。
+
+```sh
+python3 scripts/manage.py agent check gpu-01
+python3 scripts/manage.py agent install gpu-01
+```
+
+未部署时也可直接打开“算力观察”，查看指引并点击“一键部署”。先设置全局或服务器级 `own_users`。远端需 Python 3.8+ 与用户级 systemd；安装会在权限允许时自动开启后台驻留，无需安装额外 Python 包或开放端口。安装、升级、卸载和统计口径见 [算力观察说明](docs/COMPUTE-WATCH.md)。
 
 ## 环境要求
 

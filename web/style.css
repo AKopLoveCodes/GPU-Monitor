@@ -79,7 +79,6 @@ strong, b { font-weight: 600; }
 .nav-item.selected { background: var(--subtle); color: var(--text); font-weight: 600; }
 .nav-icon { width: 18px; text-align: center; font-size: 17px; line-height: 1; color: var(--faint); }
 .nav-item.selected .nav-icon { color: var(--text); }
-.nav-count { margin-left: auto; min-width: 29px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 5px; text-align: center; font: 14px var(--mono); color: var(--muted); }
 .nav-arrow { margin-left: auto; font-size: 18px; color: var(--faint); }
 .nav-item small { display: block; margin-top: 3px; color: var(--faint); font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 215px; }
 .host-status, .local-dot { display: inline-block; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
@@ -303,7 +302,7 @@ dialog::backdrop { background: #11111180; backdrop-filter: blur(3px); }
   .sidebar::-webkit-scrollbar { display: none; }
   .brand { flex: none; margin: 0 12px 0 0; font-size: 17px; }
   .brand img { width: 30px; height: 30px; }
-  .brand small, .nav-label, .sidebar-bottom, .nav-count, .nav-arrow, .nav-icon, .nav-item small { display: none; }
+  .brand small, .nav-label, .sidebar-bottom, .nav-arrow, .nav-icon, .nav-item small { display: none; }
   #server-nav { display: flex; align-items: center; gap: 4px; }
   .nav-item { flex: none; width: auto; min-height: 40px; padding: 8px 11px; margin: 0; font-size: 14px; white-space: nowrap; }
   .host-status { width: 6px; height: 6px; }

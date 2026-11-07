@@ -2,12 +2,23 @@
 
 Monitor NVIDIA GPUs across SSH servers in a local dashboard: find free GPUs,
 view processes and recent utilization.
-Supports Chinese / English and light / dark themes. Monitoring is read-only;
-no server packages or services need to be installed.
+Supports Chinese / English and light / dark themes. Live monitoring is read-only and needs no remote installation.
+Optional continuous history uses a lightweight remote user service.
 
 [简体中文](README.zh-CN.md)
 
 ![GPU Monitor dashboard](docs/screenshot-en-light.jpg)
+
+## Compute Watch
+
+The workspace sidebar includes Compute Watch: personal GPU-hours, active time, memory peaks, timelines, hourly heatmaps and device usage for today, three days or a week. An optional lightweight remote user service records independently of local SSH connections. Minute aggregates stay on each server for at most 168 hours.
+
+```sh
+python3 scripts/manage.py agent check gpu-01
+python3 scripts/manage.py agent install gpu-01
+```
+
+The page is available before deployment, with instructions and Deploy buttons. Configure global or per-server `own_users` first. Remote recording requires Python 3.8+ and user systemd; installation enables lingering when permitted, without pip dependencies or additional network ports. `agent upgrade`, `status` and `uninstall` manage the service; uninstall deletes its history. See [Compute Watch details](docs/COMPUTE-WATCH.md).
 
 ## Requirements
 
