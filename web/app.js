@@ -11,11 +11,11 @@ const gib = (value) => Number.isFinite(value) ? (value / GiB).toFixed(1) : '—'
 const pct = (value) => Number.isFinite(value) ? Math.round(value * 100) : null;
 const sum = (items, field) => items.reduce((total, item) => total + (item[field] ?? 0), 0);
 const clockTime = (seconds) => new Date(seconds * 1000).toLocaleTimeString(I18N.timeLocale(), {hour12: false});
-const ownUsers = () => state.data?.own_users ?? [];
+const ownUsers = () => [...new Set([...(state.data?.own_users ?? []), ...(state.data?.servers ?? []).flatMap(s => s.gpus.flatMap(g => g.own_users ?? []))])];
 const fresh = (server) => !state.failed && server.status === 'online' && Date.now() / 1000 - server.last_success <= (state.data?.stale_after_seconds ?? 12);
 const idle = (gpu) => gpu.processes_available && gpu.process_count === 0 && gpu.memory_used_bytes != null && gpu.memory_used_bytes <= 512 * MiB && gpu.utilization_gpu != null && gpu.utilization_gpu <= .1;
 const inUse = (gpu) => (gpu.processes_available && gpu.process_count > 0) || (gpu.memory_used_bytes != null && gpu.memory_used_bytes > 512 * MiB) || (gpu.utilization_gpu != null && gpu.utilization_gpu > .1);
-const mine = (gpu) => gpu.processes?.some(proc => ownUsers().includes(proc.user)) ?? false;
+const mine = (gpu) => gpu.processes?.some(proc => (gpu.own_users ?? ownUsers()).includes(proc.user)) ?? false;
 const selectedServers = () => (state.data?.servers ?? []).filter(s => state.server === 'all' || state.server === s.name);
 function matches(gpu) {
   return state.gpuFilter === 'all' ||
@@ -61,7 +61,6 @@ function renderStats(servers) {
   const online = servers.filter(fresh), gpus = online.flatMap(s => s.gpus);
   $('#stat-gpus').textContent = gpus.length;
   $('#stat-hosts').textContent = t('stats.hosts', {online: online.length, total: servers.length});
-  $('#nav-total').textContent = (state.data?.servers ?? []).filter(fresh).reduce((n, s) => n + s.gpus.length, 0);
   $('#stat-idle').textContent = gpus.filter(idle).length;
   $('#stat-free').textContent = gib(sum(gpus, 'memory_free_bytes'));
   $('#stat-total-memory').textContent = t('stats.total_mem', {value: gib(sum(gpus, 'memory_total_bytes'))});
@@ -77,6 +76,7 @@ function renderNav() {
   $('#server-nav').innerHTML = state.data.servers.map(server => `<button class="nav-item ${state.server === server.name ? 'selected' : ''}" data-server="${esc(server.name)}"><span class="host-status ${fresh(server) ? 'online' : 'offline'}"></span><span>${esc(server.name)}<small>${server.gpus.length || '—'} × ${esc(server.gpus[0]?.name.replace('NVIDIA GeForce ', '') || 'GPU')}</small></span><span class="nav-arrow">›</span></button>`).join('');
   document.querySelector('[data-server="all"]').classList.toggle('selected', state.server === 'all');
   $('#breadcrumb-title').textContent = state.server === 'all' ? t('topbar.overview') : state.server;
+  window.ComputeWatch?.syncNav();
 }
 function utilizationSummary(gpu) {
   const window = gpu.utilization_window;
@@ -131,7 +131,7 @@ function processRows(servers) {
 function renderProcesses(servers) {
   const rows = processRows(servers).filter(({server,gpu,proc}) => `${server.name} ${gpu.index} ${proc.user ?? ''} ${proc.pid} ${proc.command ?? ''} ${proc.name}`.toLowerCase().includes(state.search.toLowerCase()));
   $('#process-count').textContent = rows.length;
-  $('#process-body').innerHTML = rows.map(({server,gpu,proc}) => `<tr class="${fresh(server) ? '' : 'stale-row'}"><td><span class="table-host">${esc(server.name)}</span><span class="gpu-number">${gpu.index}</span>${fresh(server) ? '' : `<small> ${esc(t('table.stale'))}</small>`}</td><td><span class="user-tag ${ownUsers().includes(proc.user) ? 'self' : ''}">${esc(proc.user)}</span></td><td class="mono muted">${proc.pid}</td><td class="process-command" title="${esc(proc.command ?? proc.name)}"><strong>${esc(proc.name.split('/').pop())}</strong><small>${esc(proc.command ?? t('table.no_perm'))}</small></td><td class="mono">${Number.isFinite(proc.memory_bytes) ? num(proc.memory_bytes / MiB) + ' MiB' : '—'}</td><td class="mono muted">${num(proc.cpu_percent,1)}%</td><td class="mono muted">${elapsed(proc.elapsed_seconds)}</td></tr>`).join('') || `<tr><td colspan="7" class="empty-row">${esc(t('table.empty'))}</td></tr>`;
+  $('#process-body').innerHTML = rows.map(({server,gpu,proc}) => `<tr class="${fresh(server) ? '' : 'stale-row'}"><td><span class="table-host">${esc(server.name)}</span><span class="gpu-number">${gpu.index}</span>${fresh(server) ? '' : `<small> ${esc(t('table.stale'))}</small>`}</td><td><span class="user-tag ${(gpu.own_users ?? ownUsers()).includes(proc.user) ? 'self' : ''}">${esc(proc.user)}</span></td><td class="mono muted">${proc.pid}</td><td class="process-command" title="${esc(proc.command ?? proc.name)}"><strong>${esc(proc.name.split('/').pop())}</strong><small>${esc(proc.command ?? t('table.no_perm'))}</small></td><td class="mono">${Number.isFinite(proc.memory_bytes) ? num(proc.memory_bytes / MiB) + ' MiB' : '—'}</td><td class="mono muted">${num(proc.cpu_percent,1)}%</td><td class="mono muted">${elapsed(proc.elapsed_seconds)}</td></tr>`).join('') || `<tr><td colspan="7" class="empty-row">${esc(t('table.empty'))}</td></tr>`;
 }
 function renderDetail() {
   if (!state.detail) return;
@@ -183,7 +183,7 @@ async function copyText(value) {
 }
 document.addEventListener('click', event => {
   const nav = event.target.closest('[data-server]');
-  if (nav) { state.server = nav.dataset.server; render(); }
+  if (nav) { window.ComputeWatch?.show(false); state.server = nav.dataset.server; render(); }
   const card = event.target.closest('.gpu-card');
   if (card) { state.detail = {host:card.dataset.host,index:Number(card.dataset.gpu)}; renderDetail(); if (!$('#gpu-dialog').open) $('#gpu-dialog').showModal(); }
   if (event.target.closest('#copy-detail') && state.detail) copyText(`CUDA_VISIBLE_DEVICES=${state.detail.index} python your_script.py`);

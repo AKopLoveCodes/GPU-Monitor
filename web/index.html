@@ -8,12 +8,15 @@
   <script src="/i18n.js"></script>
   <script src="/theme.js"></script>
   <script src="/app.js" defer></script>
+  <script src="/usage.js" defer></script>
+  <link rel="stylesheet" href="/usage.css">
 </head>
 <body>
   <aside class="sidebar">
     <a class="brand" href="/"><img src="/favicon.svg" alt=""><span>GPU Monitor<small data-i18n="sidebar.brand_sub">GPU 监控工作台</small></span></a>
     <div class="nav-label" data-i18n="sidebar.workspace">工作空间</div>
-    <button class="nav-item selected" data-server="all"><span class="nav-icon">▦</span><span data-i18n="sidebar.overview">资源总览</span><span class="nav-count" id="nav-total">—</span></button>
+    <button class="nav-item selected" data-server="all"><span class="nav-icon">▦</span><span data-i18n="sidebar.overview">资源总览</span></button>
+    <button class="nav-item" id="usage-nav"><span class="nav-icon">◷</span><span data-i18n="usage.title">算力观察</span></button>
     <div class="nav-label server-label"><span data-i18n="sidebar.servers">服务器</span> <span>SSH</span></div>
     <div id="server-nav"><div class="loading-small" data-i18n="sidebar.connecting">正在连接服务器…</div></div>
     <div class="sidebar-bottom"><span class="local-dot"></span><div><span data-i18n="sidebar.local">本地安全连接</span><small data-i18n="sidebar.local_sub">127.0.0.1 · SSH 采集</small></div></div>
@@ -35,7 +38,7 @@
         </details>
       </div>
     </header>
-    <div class="workspace">
+    <div class="workspace" id="overview-page">
       <div class="page-heading"><div><div class="eyebrow">OVERVIEW <span class="eyebrow-line"></span> GPU CLUSTER</div><h1 data-i18n="heading.title">GPU 资源总览</h1><p data-i18n="heading.sub">实时掌握集群状态，找到适合下一项任务的计算资源。</p></div><button id="refresh" class="button secondary"><span aria-hidden="true">↻</span><span data-i18n="heading.refresh">刷新数据</span></button></div>
       <div id="connection-error" class="connection-error" hidden role="alert"></div>
       <section class="stats" aria-label="Cluster statistics">
@@ -52,6 +55,7 @@
       <section class="process-section"><div class="section-heading"><div><div class="eyebrow">ACTIVITY</div><h2><span data-i18n="activity.title">运行中的计算进程</span><span id="process-count"></span></h2></div><label class="process-search"><span aria-hidden="true">⌕</span><input id="process-search" type="search" data-i18n-placeholder="activity.search_ph" placeholder="搜索用户、PID 或任务…" data-i18n-aria="activity.title" aria-label="运行中的计算进程"></label></div><div class="table-scroll"><table><thead><tr><th data-i18n="table.host">服务器 / GPU</th><th data-i18n="table.user">用户</th><th>PID</th><th data-i18n="table.process">进程 / 任务</th><th data-i18n="table.mem">GPU 显存</th><th data-i18n="table.cpu" data-i18n-title="table.cpu_title" title="ps 报告的进程整个生命周期 CPU 平均使用率">CPU 均值</th><th data-i18n="table.elapsed">运行时长</th></tr></thead><tbody id="process-body"><tr><td colspan="7" class="empty-row" data-i18n="table.empty">没有匹配的计算进程；未连接或进程采集异常时不能据此判断空闲</td></tr></tbody></table></div></section>
       <footer><span id="footer-interval"><span data-i18n="footer.interval">每 3 秒自动采集 · 趋势保留最近 5 分钟</span></span><span>nvidia_gpu_exporter <span class="footer-separator">/</span> SSH <span class="footer-separator">/</span> LOCAL</span></footer>
     </div>
+    <div class="workspace" id="usage-page" hidden></div>
   </main>
   <dialog id="gpu-dialog"><div class="dialog-header"><div><span class="eyebrow">GPU DETAILS</span><h2 id="dialog-title"></h2></div><button class="icon-button" id="dialog-close" data-i18n-aria="detail.close_aria" aria-label="关闭详情">×</button></div><div id="dialog-body"></div></dialog>
   <div id="toast" role="status" hidden></div>

@@ -4,6 +4,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import getpass
+import hashlib
 import glob
 import json
 import os
@@ -31,6 +32,14 @@ STATE = RUNTIME / "service.json"
 SSH_HOST = re.compile(r"[A-Za-z0-9][A-Za-z0-9._@-]*")
 UNIX_USER = re.compile(r"[A-Za-z0-9._-]+")
 PS_FORMAT = "pid=,user:32=,pcpu=,pmem=,etimes=,args="
+
+
+def source_signature():
+    digest = hashlib.sha256()
+    for path in sorted([ROOT / 'server.py', *(ROOT / 'scripts').glob('*.py')]):
+        digest.update(path.name.encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
 
 
 def read_state():
@@ -228,17 +237,21 @@ def initialize(args):
         if answer not in ("", "y", "yes"):
             print("Cancelled; config.json was not changed")
             return
-    users = [user for user in (effective_ssh_user(result["host"]) for result in selected) if user]
+    per_host_users = {result['host']: effective_ssh_user(result['host']) for result in selected}
+    users = [user for user in per_host_users.values() if user]
     if existing:
         used = {host["name"] for host in existing["servers"]}
         for result in selected:
             name = server_name(result["host"], used)
             used.add(name)
-            existing["servers"].append({"name": name, "ssh_host": result["host"]})
+            existing["servers"].append({"name": name, "ssh_host": result["host"], "own_users": [per_host_users[result["host"]]] if per_host_users[result["host"]] else []})
         existing["own_users"] = sorted(set(existing.get("own_users", []) + users))
         settings = existing
     else:
         settings = generated_config([result["host"] for result in selected], available_port(8765), users)
+    for host in settings["servers"]:
+        if host["ssh_host"] in per_host_users:
+            host["own_users"] = [per_host_users[host["ssh_host"]]] if per_host_users[host["ssh_host"]] else []
     write_config(config_path, settings)
     action = "Added %d host(s) to" if existing else "Created"
     message = (action % len(selected)) if existing else action
@@ -299,9 +312,45 @@ def doctor():
     print("Doctor: all required checks passed")
 
 
+def agent_command(arguments):
+    from scripts.agent_manager import operate
+    parser = argparse.ArgumentParser(description="Manage the optional remote Compute Watch recorder")
+    parser.add_argument('operation', choices=['check', 'install', 'upgrade', 'status', 'uninstall', 'clear-data', 'rollback'])
+    parser.add_argument('hosts', nargs='*', help='configured server names or SSH aliases; default: all')
+    args = parser.parse_args(arguments)
+    settings = load_config(ROOT / 'config.json')
+    hosts = [h for h in settings['servers'] if not args.hosts or h['name'] in args.hosts or h['ssh_host'] in args.hosts]
+    if any(not any(value in (h['name'], h['ssh_host']) for h in hosts) for value in args.hosts):
+        raise ValueError('unknown configured server')
+    RUNTIME.mkdir(mode=0o700, exist_ok=True)
+    failed = False
+    for host in hosts:
+        try:
+            data = operate(host, settings, control_socket_path(RUNTIME, host['name']), args.operation,
+                           lambda step: print(host['name'] + ': ' + step, flush=True))
+            print(host['name'] + ': ' + json.dumps(data, ensure_ascii=False))
+        except (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
+            failed = True
+            print(host['name'] + ': ' + str(exc), file=sys.stderr)
+    if args.operation in ('clear-data', 'rollback', 'uninstall'):
+        try:
+            request = urllib.request.Request('http://127.0.0.1:%d/api/usage/cache' % settings['port'],
+                       data=json.dumps({'servers': [h['name'] for h in hosts]}).encode(),
+                       headers={'Content-Type': 'application/json', 'X-GPU-Monitor': '1'}, method='POST')
+            with urllib.request.urlopen(request, timeout=3):
+                pass
+        except OSError:
+            pass
+    if failed:
+        raise RuntimeError('one or more remote agent operations failed')
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == 'agent':
+        agent_command(sys.argv[2:])
+        return
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=["start", "stop", "status", "init", "doctor"], nargs="?", default="start")
+    parser.add_argument("action", choices=["start", "stop", "status", "init", "doctor"], nargs="?", default="start", help="start/stop/status/init/doctor; use agent --help for remote recording")
     parser.add_argument("hosts", nargs="*", help="optional SSH aliases for init")
     parser.add_argument("--open", action="store_true")
     parser.add_argument("--force", action="store_true", help="replace config.json during init")
@@ -338,6 +387,15 @@ def main():
             STATE.unlink(missing_ok=True)
             print("GPU Monitor stopped")
             return
+        if alive and state.get('source_signature') != source_signature():
+            print('Source changed; restarting the local service to load updated APIs.')
+            os.kill(state['pid'], signal.SIGTERM)
+            deadline = time.monotonic() + 40
+            while owned(state) and time.monotonic() < deadline:
+                time.sleep(.3)
+            if owned(state):
+                raise RuntimeError('old service is still shutting down; retry start shortly')
+            alive = False
         if alive:
             if not healthy(state):
                 raise RuntimeError("a service process exists but the web UI does not respond; run stop and check .runtime/monitor.log")
@@ -350,7 +408,7 @@ def main():
                     raise ValueError(str(exc) + "; run 'python3 scripts/manage.py init' to discover GPU hosts automatically")
                 raise
             install()
-            state = {"instance": uuid.uuid4().hex, "url": "http://127.0.0.1:%d" % settings["port"]}
+            state = {"instance": uuid.uuid4().hex, "url": "http://127.0.0.1:%d" % settings["port"], "source_signature": source_signature()}
             with open(RUNTIME / "monitor.log", "a") as log:
                 process = subprocess.Popen([sys.executable, str(ROOT / "server.py"), "--instance", state["instance"]],
                                            cwd=ROOT, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)

@@ -24,7 +24,9 @@ jobs:
       - name: Python unit tests
         run: python3 -m unittest discover -s tests -v
       - name: UI logic and i18n parity
-        run: node tests/test_ui_logic.cjs
+        run: |
+          node tests/test_ui_logic.cjs
+          node tests/test_usage_ui.cjs
       - name: Package and console entry
         run: |
           python3 -m pip install --no-deps .

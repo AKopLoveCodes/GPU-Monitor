@@ -7,7 +7,7 @@
   "utilization_backend": "nvml",
   "own_users": ["your-unix-username"],
   "servers": [
-    {"name": "gpu-01", "ssh_host": "gpu-01"},
+    {"name": "gpu-01", "ssh_host": "gpu-01", "own_users": ["your-unix-username"]},
     {"name": "gpu-02", "ssh_host": "gpu-02"}
   ]
 }

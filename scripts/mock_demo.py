@@ -12,11 +12,17 @@ import argparse
 import json
 import random
 import time
+import math
+import sys
+from urllib.parse import parse_qs, urlsplit
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from functools import partial
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from scripts.usage_summary import summarize as summarize_usage
+
 INTERVAL = 3
 HISTORY_POINTS = 100
 
@@ -93,7 +99,30 @@ def make_status():
             "own_users": ["demo"], "servers": [make_server("gpu-01", "gpu-01"), make_server("gpu-02", "gpu-02")]}
 
 
-STATIC = {"/", "/index.html", "/app.js", "/i18n.js", "/theme.js", "/style.css", "/favicon.svg",
+def make_usage(host=0):
+    """Deterministic synthetic seven-day records for UI review, not live telemetry."""
+    now=time.time()
+    start=math.ceil((now-7*86400)/60)*60
+    devices=[{'id':i,'uuid':'demo-%d-%d'%(host,i),'index':i,'name':'NVIDIA RTX 4090'} for i in range(4)]
+    points, activity=[], []
+    for at in range(start,int(now//60)*60,60):
+        hour=time.localtime(at).tm_hour
+        if (at//3600+host)%31==0:
+            continue
+        active=False
+        for i in range(4):
+            used = 60 if (8+i <= hour < 15+i or (at//86400+i+host)%3==0 and hour<5) else 0
+            if i==3 and host==1:
+                used=0
+            util=.6+.3*math.sin(at/700+i)
+            memory=int((14+i*2)*1024**3) if used else None
+            points.append([at,i,60,used,used if i==1 and hour>13 else 0,util*used,used,memory,at if used else None,at+60 if used else None])
+            active=active or bool(used)
+        activity.append([at,60,60 if active else 0,30*1024**3 if active else 0,format(2**60-1 if active else 0,'x')])
+    return {'status':'recording','devices':devices,'points':points,'activity':activity,'metadata':{'heartbeat':str(now)},'users':['demo'],'fetched_at':now}
+
+
+STATIC = {"/", "/index.html", "/app.js", "/usage.js", "/usage.css", "/i18n.js", "/theme.js", "/style.css", "/favicon.svg",
           "/assets/background-dark.jpg", "/assets/background-light.jpg"}
 
 
@@ -103,8 +132,18 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?", 1)[0]
-        if path == "/api/status":
-            body = json.dumps(make_status(), ensure_ascii=False).encode()
+        if path in ("/api/status", "/api/usage"):
+            if path == '/api/usage':
+                params = parse_qs(urlsplit(self.path).query)
+                now = time.time()
+                start = float(params.get('start', [now-86400])[0])
+                end = float(params.get('end', [now])[0])
+                hosts = [(name, make_usage(i)) for i, name in enumerate(('gpu-01','gpu-02'))
+                         if params.get('server', ['all'])[0] in ('all', name)]
+                result = summarize_usage(hosts, start, end)
+            else:
+                result = make_status()
+            body = json.dumps(result, ensure_ascii=False).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))

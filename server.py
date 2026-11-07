@@ -19,6 +19,11 @@ import sys
 import threading
 import time
 import urllib.request
+from urllib.parse import parse_qs, urlsplit
+
+from scripts.usage_client import UsageClient
+from scripts.agent_manager import AgentManager
+from scripts.usage_summary import summarize as summarize_usage
 
 from scripts.bootstrap import exporter_path
 from scripts.ssh_smi import ssh_options
@@ -155,6 +160,7 @@ class HostMonitor:
         self.auto_exporter_port = self.exporter_port is None
         self.history = defaultdict(lambda: deque(maxlen=settings["history_points"]))
         self.last_trend_monotonic = None
+        self.usage = UsageClient(config["ssh_host"], self.control, stop_event)
         self.raw_metrics = ""
         self.state = {"name": config["name"], "ssh_host": config["ssh_host"], "status": "connecting",
                       "error": None, "error_code": None, "warning": None, "warning_code": None,
@@ -169,6 +175,7 @@ class HostMonitor:
                          error="last successful sample is older than the staleness window")
         for gpu in state["gpus"]:
             gpu["stale"] = state["status"] != "online"
+            gpu["own_users"] = self.config.get("own_users", self.settings.get("own_users", []))
         return state
 
     def ensure_exporter(self):
@@ -364,6 +371,10 @@ def load_config(path):
             raise ValueError("server names must be unique and contain only letters, digits, underscore or hyphen")
         if not isinstance(host["ssh_host"], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._@-]*", host["ssh_host"]):
             raise ValueError("ssh_host must be an SSH config alias or user@host")
+        if "own_users" in host:
+            users = host["own_users"]
+            if (not isinstance(users, list) or len(users) > 16 or any(not isinstance(u, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", u) for u in users)):
+                raise ValueError("server own_users must be a list of at most 16 Unix user names")
         # Legacy explicit ports remain valid, but are no longer needed: new
         # configurations receive a unique loopback port at runtime.
         if "exporter_port" in host:
@@ -378,8 +389,9 @@ def load_config(path):
 
 
 class Handler(SimpleHTTPRequestHandler):
-    def __init__(self, *args, monitors, settings, instance, **kwargs):
+    def __init__(self, *args, monitors, settings, instance, agents=None, **kwargs):
         self.monitors, self.settings, self.instance = monitors, settings, instance
+        self.agents = agents
         super().__init__(*args, directory=str(ROOT / "web"), **kwargs)
 
     def end_headers(self):
@@ -402,17 +414,76 @@ class Handler(SimpleHTTPRequestHandler):
                                "history_seconds": self.settings["interval_seconds"] * self.settings["history_points"],
                                "own_users": self.settings.get("own_users", []),
                                "servers": [monitor.snapshot() for monitor in self.monitors]})
+        elif path == "/api/agents":
+            self.respond_json({"jobs": self.agents.snapshot() if self.agents else []})
+        elif path == "/api/usage":
+            try:
+                query = parse_qs(urlsplit(self.path).query)
+                now = time.time()
+                start = float(query.get("start", [now - 86400])[0])
+                end = float(query.get("end", [now])[0])
+                selected = query.get("server", ["all"])[0]
+                if not math.isfinite(start) or not math.isfinite(end) or end <= start or end - start > 7 * 86400 + 3600:
+                    raise ValueError("invalid history window")
+                hosts = [(m.config["name"], dict(m.usage.snapshot(), configured_users=m.config.get("own_users", self.settings.get("own_users", [])))) for m in self.monitors
+                         if selected == "all" or selected == m.config["name"]]
+                result = summarize_usage(hosts, start, end, now)
+                result["jobs"] = self.agents.snapshot() if self.agents else []
+                self.respond_json(result)
+            except (ValueError, OverflowError):
+                self.send_error(400, "Invalid history window")
         elif path == "/healthz":
             self.respond_json({"app": "gpu-monitor", "instance": self.instance, "status": "ok"})
-        elif path in ("/", "/index.html", "/app.js", "/i18n.js", "/theme.js", "/style.css", "/favicon.svg",
+        elif path in ("/", "/index.html", "/app.js", "/usage.js", "/usage.css", "/i18n.js", "/theme.js", "/style.css", "/favicon.svg",
                       "/assets/background-dark.jpg", "/assets/background-light.jpg"):
             super().do_GET()
         else:
             self.send_error(404)
 
-    def respond_json(self, value):
+    def do_POST(self):
+        # A same-origin JSON request with a custom header prevents cross-site forms
+        # or scripts from turning this local-only service into a deployment proxy.
+        allowed = {"127.0.0.1:" + str(self.settings["port"]), "localhost:" + str(self.settings["port"])}
+        host = self.headers.get("Host")
+        origin = self.headers.get("Origin")
+        if (host not in allowed or (origin is not None and origin != "http://" + host)
+                or self.headers.get("Sec-Fetch-Site") == "cross-site"
+                or self.headers.get("X-GPU-Monitor") != "1"):
+            self.send_error(403)
+            return
+        if self.path not in ("/api/agents", "/api/usage/cache") or not self.agents:
+            self.send_error(404)
+            return
+        if self.headers.get_content_type() != "application/json":
+            self.send_error(415)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 8192:
+                raise ValueError("invalid request size")
+            payload = json.loads(self.rfile.read(length))
+            if not isinstance(payload, dict):
+                raise ValueError("invalid request")
+            if self.path == "/api/usage/cache":
+                names = payload.get("servers")
+                if not isinstance(names, list) or any(not isinstance(n, str) for n in names):
+                    raise ValueError("invalid server list")
+                for monitor in self.monitors:
+                    if monitor.config['name'] in names:
+                        monitor.usage.reset()
+                self.agents.forget(names)
+                self.respond_json({'status': 'cleared'})
+                return
+            job = self.agents.submit(payload.get("action"), payload.get("servers"))
+            self.respond_json(job, 202)
+        except (ValueError, TypeError):
+            self.send_error(400, "Invalid deployment request")
+        except RuntimeError as exc:
+            self.respond_json({"error": str(exc)}, 409)
+
+    def respond_json(self, value, status=200):
         body = json.dumps(value, ensure_ascii=False, allow_nan=False).encode()
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -436,10 +507,12 @@ def main():
     runtime.chmod(0o700)
     stop = threading.Event()
     monitors = [HostMonitor(host, settings, runtime, stop) for host in settings["servers"]]
-    factory = partial(Handler, monitors=monitors, settings=settings, instance=args.instance)
+    agents = AgentManager(monitors, settings)
+    factory = partial(Handler, monitors=monitors, settings=settings, instance=args.instance, agents=agents)
     httpd = ThreadingHTTPServer((settings["listen"], settings["port"]), factory)
     httpd.timeout = .5
-    threads = [threading.Thread(target=monitor.run, daemon=True) for monitor in monitors]
+    threads = [threading.Thread(target=worker, daemon=True) for monitor in monitors
+               for worker in (monitor.run, monitor.usage.run)]
     for thread in threads:
         thread.start()
     def on_signal(signum, frame):
