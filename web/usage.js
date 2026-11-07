@@ -60,7 +60,7 @@
   function setupPanel(panels) {
     const needs = panels.filter(h => h.status !== 'recording');
     const jobs = data?.jobs ?? [];
-    if (!needs.length && !deploymentError) return jobs.some(j=>j.status==='done') ? `<p class="usage-job" role="status">${esc(tr('deploy_done'))}</p>` : ''; 
+    if (!needs.length && !deploymentError) return jobs.some(j=>j.status==='done') ? `<p class="usage-job" role="status">${esc(tr('deploy_done'))}</p>` : '';
     const names = needs.map(h=>h.name);
     const working = deploying || names.some(busy);
     return `<section class="usage-setup" aria-label="${esc(tr('setup'))}">
