@@ -16,7 +16,9 @@ def remote(host, action, control, **payload):
     body = json.dumps(dict(payload, action=action))
     completed = subprocess.run(['ssh', *ssh_options(control), host,
                                 shlex.join(['python3', '-c', source])],
-                               input=body, capture_output=True, text=True,
+                               # SSH diagnostics may use the remote locale or be truncated
+                               # on disconnect. They must not kill the background sync.
+                               input=body, capture_output=True, text=True, encoding='utf-8', errors='replace',
                                timeout=150 if action in ('install', 'upgrade', 'clear-data', 'uninstall', 'rollback') else 20)
     try:
         result = json.loads(completed.stdout)

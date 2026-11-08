@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 import sqlite3
 import shlex
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -110,6 +112,41 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(json.loads(kwargs['input'])['action'],'query')
         self.assertEqual(shlex.split(args[0][-1])[:2], ['python3', '-c'])
         self.assertEqual(len(shlex.split(args[0][-1])), 3)
+
+    def test_non_utf8_ssh_diagnostics_do_not_stop_sync_and_history_catches_up(self):
+        client = UsageClient('test', '/tmp/control', threading.Event())
+        now = int(time.time() // 60) * 60
+        earlier = now - 6 * 3600
+        client.state.update(status='recording', users=['demo'], fetched_at=earlier,
+                            metadata={'database_id': 'same'},
+                            devices=[{'id': 1}], points=[[earlier - 180, 1]],
+                            activity=[[earlier - 180, 60, 60, 0, '1']])
+        recovered = {'status': 'recording', 'users': ['demo'],
+                     'metadata': {'database_id': 'same'}, 'devices': [{'id': 1}],
+                     'points': [[earlier + 60, 1], [now - 60, 1]],
+                     'activity': [[earlier + 60, 60, 60, 0, '1'], [now - 60, 60, 60, 0, '1']]}
+        # Run actual subprocess decoding with invalid bytes in both a connection
+        # failure and a successful SSH response containing a diagnostic warning.
+        scripts = iter([
+            "import sys; sys.stderr.buffer.write(b'SSH disconnected: \\xe4\\xb8'); sys.exit(255)",
+            "import sys; sys.stderr.buffer.write(b'SSH warning: \\xff'); print(%r)" % json.dumps(recovered),
+        ])
+        run = subprocess.run
+        def ssh(_argv, **kwargs):
+            return run([sys.executable, '-c', next(scripts)], **kwargs)
+        with patch('scripts.usage_client.subprocess.run', side_effect=ssh) as transport:
+            client.refresh()
+            self.assertEqual(client.state['status'], 'unreachable')
+            self.assertIn('SSH disconnected:', client.state['error'])
+            self.assertEqual(client.state['fetched_at'], earlier)
+            client.refresh()
+        data = client.snapshot()
+        self.assertEqual(data['status'], 'recording')
+        self.assertNotIn('error', data)
+        self.assertGreater(data['fetched_at'], earlier)
+        self.assertEqual(data['points'], [[earlier - 180, 1], *recovered['points']])
+        self.assertEqual(len(data['activity']), 3)
+        self.assertEqual(json.loads(transport.call_args.kwargs['input'])['start'], earlier - 120)
 
     def test_connection_failure_preserves_but_labels_cached_history(self):
         stop=threading.Event()
