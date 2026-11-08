@@ -122,7 +122,6 @@ html[data-wallpaper="off"] { --wallpaper-image: none; }
 .button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 43px; padding: 9px 16px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface); color: var(--text); font-size: 14px; font-weight: 550; white-space: nowrap; box-shadow: 0 1px 2px #00000009; }
 .button:hover { background: var(--hover); border-color: var(--faint); }
 .button span { font-size: 18px; line-height: .8; color: var(--muted); }
-.button.refreshing span { animation: rotate 1s linear infinite; }
 
 .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 44px; border: 1px solid var(--line); border-radius: 11px; background: var(--glass-surface); overflow: hidden; }
 .stat { min-width: 0; min-height: 158px; padding: 22px 22px 20px; border-right: 1px solid var(--line); }

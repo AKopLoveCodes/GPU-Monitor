@@ -45,6 +45,13 @@ vm.runInContext(fs.readFileSync('web/usage.js','utf8'),context);
  context.ComputeWatch.show(false);
  assert.equal(page.hidden,true);
  assert.equal(element('#overview-page').hidden,false);
+ for (const status of ['connecting', 'unreachable', 'stopped']) {
+  fixture.hosts=[{name:'host',status}];
+  context.ComputeWatch.show(true);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.ok(!page.innerHTML.includes('尚未部署持续采集'));
+  assert.ok(!page.innerHTML.includes('data-deploy-host='));
+ }
  fixture.hosts=[{name:'host',status:'not_installed',configured_users:['demo']}];
  fixture.devices=[]; fixture.sessions=[]; fixture.series=[];
  context.ComputeWatch.show(true);

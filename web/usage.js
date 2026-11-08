@@ -58,7 +58,7 @@
     finally { deploying = false; render(); refresh(); }
   }
   function setupPanel(panels) {
-    const needs = panels.filter(h => h.status !== 'recording');
+    const needs = panels.filter(h => h.status === 'not_installed');
     const jobs = data?.jobs ?? [];
     if (!needs.length && !deploymentError) return jobs.some(j=>j.status==='done') ? `<p class="usage-job" role="status">${esc(tr('deploy_done'))}</p>` : '';
     const names = needs.map(h=>h.name);
@@ -157,7 +157,7 @@
     const summary=data?.summary, known=!!data?.devices.length;
     const panels = data?.hosts??[];
     const undeployed = panels.length && panels.every(h=>h.status==='not_installed');
-    page.innerHTML=`<div class="page-heading"><div><div class="eyebrow">COMPUTE WATCH <span class="eyebrow-line"></span> PERSONAL</div><h1>${esc(tr('title'))}</h1><p>${esc(tr('subtitle'))}</p></div><button class="button secondary" id="usage-refresh" ${loading?'disabled':''}>↻ ${esc(tr('refresh'))}</button></div>
+    page.innerHTML=`<div class="page-heading"><div><div class="eyebrow">COMPUTE WATCH <span class="eyebrow-line"></span> PERSONAL</div><h1>${esc(tr('title'))}</h1><p>${esc(tr('subtitle'))}</p></div></div>
       <div class="usage-toolbar"><div class="usage-periods" role="group" aria-label="${esc(tr('range'))}">${[[1,'today'],[3,'three'],[7,'week']].map(([value,key])=>`<button type="button" class="button ${days===value?'selected':'secondary'}" data-days="${value}" aria-pressed="${days===value}">${esc(tr(key))}</button>`).join('')}</div><label>${esc(tr('host_gpu'))} <select id="usage-host"><option value="all">${esc(tr('all'))}</option>${hosts.map(h=>`<option value="${esc(h.name)}" ${h.name===host?'selected':''}>${esc(h.name)}</option>`).join('')}</select></label></div>
       ${failed?`<div class="connection-error" role="alert">${esc(tr('error'))}</div>`:''}
       <div class="usage-agents" aria-live="polite">${panels.map(h=>`<div><span class="host-status ${h.status==='recording'?'online':''}"></span><strong>${esc(h.name)}</strong><span>${esc(tr(h.status))}</span>${h.users?.length?`<small>${esc(tr('users'))}: ${esc(h.users.join(', '))}</small>`:''}${h.fetched_at?`<small>${esc(tr('fetched'))}: ${esc(formatTime(h.fetched_at))}</small>`:''}${h.error?`<small>${esc(h.error)}</small>`:''}</div>`).join('')}</div>
@@ -173,9 +173,8 @@
   document.querySelector('#usage-nav').addEventListener('click',()=>show(true));
   page.addEventListener('click', event=>{
     const button=event.target.closest('button'); if(!button) return;
-    if(button.id==='usage-refresh') refresh();
     if(button.dataset.deployHost) deploy([button.dataset.deployHost]);
-    if(button.id==='usage-deploy-all') deploy((data?.hosts??[]).filter(h=>h.status!=='recording').map(h=>h.name));
+    if(button.id==='usage-deploy-all') deploy((data?.hosts??[]).filter(h=>h.status==='not_installed').map(h=>h.name));
     if(button.dataset.days) { days=Number(button.dataset.days); selection=null; data=null; serial++; loading=false; refresh(); }
     if(button.dataset.session!==undefined) { selection={session:data.sessions[Number(button.dataset.session)]}; limit=40; render(); document.querySelector('#usage-clear')?.scrollIntoView({block:'nearest'}); }
     if(button.dataset.hour!==undefined) { selection={hour:Number(button.dataset.hour)}; limit=40; render(); }

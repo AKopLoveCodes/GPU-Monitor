@@ -159,7 +159,7 @@ function render() {
 let inFlight = false;
 async function fetchStatus() {
   if (inFlight) return;
-  inFlight = true; $('#refresh').classList.add('refreshing');
+  inFlight = true;
   try {
     const response = await fetch('/api/status', {cache:'no-store', signal:AbortSignal.timeout(7000)});
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -169,7 +169,7 @@ async function fetchStatus() {
     $('#connection-error').textContent = t('error.service_unreachable');
     $('#connection-error').hidden = false;
     if (!state.data) $('#server-groups').innerHTML = `<div class="empty-filter">${esc(t('group.waiting_service'))}</div>`;
-  } finally { inFlight = false; $('#refresh').classList.remove('refreshing'); render(); }
+  } finally { inFlight = false; render(); }
 }
 let toastTimer;
 async function copyText(value) {
@@ -199,7 +199,6 @@ for (const [id, filter] of gpuFilterOptions) {
 }
 $('#sort').addEventListener('change', event => { state.sort = event.target.value; render(); });
 $('#process-search').addEventListener('input', event => { state.search = event.target.value; if (state.data) renderProcesses(selectedServers()); });
-$('#refresh').addEventListener('click', fetchStatus);
 $('#dialog-close').addEventListener('click', () => $('#gpu-dialog').close());
 $('#gpu-dialog').addEventListener('click', event => { if (event.target === $('#gpu-dialog')) $('#gpu-dialog').close(); });
 $('#gpu-dialog').addEventListener('close', () => { state.detail = null; });
