@@ -83,18 +83,27 @@
   function stat(label, value, unit) {
     return `<div class="stat"><span class="stat-label">${esc(tr(label))}</span><div><strong>${value}</strong><span class="stat-unit">${esc(unit)}</span></div></div>`;
   }
+  function chartRange() {
+    if (!data?.series.length) return null;
+    return {start:Math.max(data.start, data.series[0][0]),
+      end:Math.min(data.end, data.series[data.series.length-1][0] + data.step)};
+  }
   function trend() {
     if (!data?.series.length) return empty();
-    const {start,end,step} = data, width=900, height=160, left=38, right=12, top=15, bottom=30;
+    const {start,end} = chartRange(), {step} = data, width=900, height=160, left=38, right=12, top=15, bottom=30;
     const max = Math.max(1,...data.series.map(p=>p[1]/step));
     const x = at => left+(at-start)/(end-start)*(width-left-right);
     const y = v => height-bottom-v/max*(height-top-bottom);
     let path='', previous=null;
     for (const p of data.series) {
       if (!p[2]) { previous=null; continue; }
-      const at=Math.max(start,p[0])+Math.min(step,end-p[0])/2;
+      const at=(Math.max(start,p[0])+Math.min(end,p[0]+step))/2;
       path += `${previous !== null && p[0]-previous<=step ? 'L':'M'}${x(at).toFixed(1)},${y(p[1]/step).toFixed(1)} `;
       previous=p[0];
+    }
+    if (data.series.filter(p=>p[2]).length === 1) {
+      const p=data.series.find(p=>p[2]);
+      path=`M${x(Math.max(start,p[0])).toFixed(1)},${y(p[1]/step).toFixed(1)} L${x(Math.min(end,p[0]+step)).toFixed(1)},${y(p[1]/step).toFixed(1)}`;
     }
     const grid=[0,.5,1].map(r=>`<path class="usage-grid" d="M${left},${y(max*r)}H${width-right}"/><text x="${left-8}" y="${y(max*r)+4}" text-anchor="end">${num(max*r,1)}</text>`).join('');
     const ticks=[0,.25,.5,.75,1].map((r,i)=>`<text x="${x(start+(end-start)*r)}" y="${height-6}" text-anchor="${i===0?'start':i===4?'end':'middle'}">${esc(days===1 ? date(start+(end-start)*r).toLocaleTimeString(I18N.timeLocale(),{hour:'2-digit',minute:'2-digit',hour12:false}) : date(start+(end-start)*r).toLocaleDateString(I18N.timeLocale(),{month:'2-digit',day:'2-digit'}))}</text>`).join('');
@@ -102,37 +111,41 @@
   }
   function timeline() {
     const devices = (data?.devices??[]).filter(d=>d.seconds>0);
-    if (!devices.length) return empty();
+    const range=chartRange();
+    if (!devices.length || !range) return empty();
     return `<div class="usage-timeline">${devices.map(d=>{
       const sessions=data.sessions.filter(s=>s.host===d.host&&s.uuid===d.uuid);
       return `<div class="usage-lane"><div class="usage-device-label">${esc(d.host)}<small>GPU ${d.index} · ${esc(d.name.replace('NVIDIA ',''))}</small></div><div class="usage-track">${sessions.map(s=>{
-        const left=Math.max(0,(s.start-data.start)/(data.end-data.start)*100);
-        const width=Math.max(.15,Math.min(100-left,(s.end-s.start)/(data.end-data.start)*100));
+        const left=Math.max(0,(s.start-range.start)/(range.end-range.start)*100);
+        const width=Math.max(.15,Math.min(100-left,(Math.min(s.end,range.end)-Math.max(s.start,range.start))/(range.end-range.start)*100));
         const label=`${d.host} / GPU ${d.index} · ${formatTime(s.start)} – ${formatTime(s.end)} · ${hours(s.seconds)} ${tr('hours')}${s.shared?' · '+tr('shared'):''}`;
         return `<button type="button" class="usage-span ${s.shared?'shared':''}" style="left:${left}%;width:${width}%" data-session="${data.sessions.indexOf(s)}" aria-label="${esc(label)}" title="${esc(label)}"></button>`;
       }).join('')}</div></div>`;
-    }).join('')}<div class="usage-axis"><span>${esc(formatTime(data.start))}</span><span>${esc(formatTime(data.end))}</span></div></div>`;
+    }).join('')}<div class="usage-axis"><span>${esc(formatTime(range.start))}</span><span>${esc(formatTime(range.end))}</span></div></div>`;
   }
   function heatmap() {
-    if (!data) return '';
-    const range=windowRange(), start=new Date(range.start*1000); start.setHours(0,0,0,0);
+    const range=chartRange();
+    if (!range) return empty();
+    const start=new Date(range.start*1000); start.setHours(0,0,0,0);
     const rows=[];
     // Construct real local hours, including DST repeats, rather than assuming 24h days.
-    for(let d=0;d<days;d++) {
+    for(let d=0;;d++) {
       const day=new Date(start); day.setDate(day.getDate()+d);
+      if (day.getTime()/1000 >= range.end) break;
       const next=new Date(day); next.setDate(next.getDate()+1);
       const cells=[];
       for(let at=day.getTime()/1000;at<next.getTime()/1000;at+=3600) {
-        const future=at>=data.end;
+        if (at+3600<=range.start || at>=range.end) continue;
+        const future=false;
         const points=data.series.filter(p=>p[0]>=at&&p[0]<at+3600);
         const used=points.reduce((n,p)=>n+p[1],0)/3600;
         const covered=points.reduce((n,p)=>n+p[2],0);
-        const expected=Math.max(0,Math.min(at+3600,data.end)-Math.max(at,data.start)) * data.devices.length;
+        const expected=Math.max(0,Math.min(at+3600,range.end)-Math.max(at,range.start)) * data.devices.length;
         const partial=!future && (!expected || covered/expected<.9);
         const label=`${formatTime(at)} · ${future?tr('future'):num(used,2)+' GPU·h'}${partial?' · '+tr('unknown'):''}`;
         cells.push(`<button type="button" class="usage-cell ${partial?'partial':''} ${future?'future':''}" style="--intensity:${Math.min(.95,.08+used/Math.max(1,data.summary.gpu_count)*.87)}" data-hour="${at}" ${future?'disabled':''} aria-pressed="${selection?.hour===at}" title="${esc(label)}" aria-label="${esc(label)}"><span>${date(at).getHours()}</span></button>`);
       }
-      rows.push(`<div class="usage-heat-row"><span>${esc(day.toLocaleDateString(I18N.timeLocale(),{month:'2-digit',day:'2-digit'}))}</span><div class="usage-cells">${cells.join('')}</div></div>`);
+      rows.push(`<div class="usage-heat-row"><span>${esc(day.toLocaleDateString(I18N.timeLocale(),{month:'2-digit',day:'2-digit'}))}</span><div class="usage-cells" style="--columns:${cells.length}">${cells.join('')}</div></div>`);
     }
     return `<div class="usage-heatmap">${rows.join('')}</div>`;
   }

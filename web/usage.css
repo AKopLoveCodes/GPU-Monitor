@@ -43,8 +43,8 @@
 .usage-columns { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(0,1fr); gap:32px; }
 .usage-heat-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; font:11px var(--numeric); color:var(--muted); }
 .usage-heat-row > span { width:42px; flex-shrink:0; }
-.usage-cells { display:grid; grid-template-columns:repeat(25,minmax(0,1fr)); gap:3px; width:100%; }
-.usage-cell { border:0; padding:0; aspect-ratio:1; min-height:16px; border-radius:2px; background:color-mix(in srgb,var(--green) calc(var(--intensity)*100%),var(--subtle)); color:var(--text); }
+.usage-cells { display:grid; grid-template-columns:repeat(var(--columns),minmax(0,1fr)); gap:3px; width:100%; }
+.usage-cell { border:0; padding:0; height:20px; min-height:16px; border-radius:2px; background:color-mix(in srgb,var(--green) calc(var(--intensity)*100%),var(--subtle)); color:var(--text); }
 .usage-cell span { display:none; }
 .usage-cell.partial { background-image:repeating-linear-gradient(135deg,transparent 0 3px,color-mix(in srgb,var(--muted) 30%,transparent) 3px 4px); }
 .usage-cell.future { background:var(--subtle); opacity:.35; }
@@ -63,7 +63,7 @@
  .usage-axis { margin-left:100px; font-size:10px; }
  .usage-trend { min-height:100px; }
  .usage-section .section-heading { flex-wrap:wrap; }
- .usage-cells { gap:2px; } .usage-cell { min-height:10px; }
+ .usage-cells { gap:2px; } .usage-cell { height:16px; min-height:10px; }
  .usage-periods { flex-wrap:wrap; }
 }
 .usage-setup-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; }

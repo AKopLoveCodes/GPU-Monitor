@@ -39,6 +39,17 @@ vm.runInContext(fs.readFileSync('web/usage.js','utf8'),context);
  assert.ok(!page.innerHTML.includes('<script>bad'));
  assert.ok(page.innerHTML.includes('1.00'));
  assert.equal(element('#overview-page').hidden,true);
+ // A short recording fills the chart even when the requested window is longer.
+ const trend=page.innerHTML.match(/<svg class="usage-trend"[\s\S]*?<\/svg>/)[0];
+ assert.match(trend, /class="usage-trend-line" d="M[^"]+ L/);
+ assert.ok(!trend.includes("usage-trend-point"));
+ const heatRows=[...page.innerHTML.matchAll(/class="usage-cells" style="--columns:(\d+)"/g)];
+ assert.equal(heatRows.length, 1);
+ assert.ok(Number(heatRows[0][1]) <= 2);
+ assert.ok(!page.innerHTML.includes('usage-cell future'));
+ const axis=page.innerHTML.match(/<div class="usage-axis">([\s\S]*?)<\/div>/)[1];
+ const expectedStart=new Date((at-300)*1000).toLocaleString(context.I18N.timeLocale(), {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
+ assert.ok(axis.includes(expectedStart));
  page.listeners.click({target:{closest:()=>({dataset:{device:'missing|uuid'}})}});
  assert.ok(page.innerHTML.includes('清除筛选'));
  assert.ok(page.innerHTML.includes('所选范围暂无个人使用记录'));
