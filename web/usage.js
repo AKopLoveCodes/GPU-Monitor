@@ -127,37 +127,40 @@
     const range=chartRange();
     if (!range) return empty();
     const start=new Date(range.start*1000); start.setHours(0,0,0,0);
-    const rows=[];
-    // Construct real local hours, including DST repeats, rather than assuming 24h days.
+    const daysInRange=[];
+    // Walk real local hours so daylight-saving gaps and repeats remain distinct.
     for(let d=0;;d++) {
       const day=new Date(start); day.setDate(day.getDate()+d);
       if (day.getTime()/1000 >= range.end) break;
       const next=new Date(day); next.setDate(next.getDate()+1);
-      const cells=[];
-      for(let at=day.getTime()/1000;at<next.getTime()/1000;at+=3600) {
-        if (at+3600<=range.start || at>=range.end) continue;
-        const future=false;
+      const slots=[];
+      for(let at=day.getTime()/1000;at<next.getTime()/1000;at+=3600) slots.push(at);
+      daysInRange.push({day,slots});
+    }
+    const multiple=daysInRange.length>1;
+    const columns=multiple?Math.max(24,...daysInRange.map(d=>d.slots.length)):0;
+    const rows=daysInRange.map(({day,slots})=>{
+      const visible=slots.filter(at=>at+3600>range.start && at<range.end);
+      const cells=(multiple?slots:visible).map(at=>{
+        if (at+3600<=range.start || at>=range.end) return '<span class="usage-cell-placeholder"></span>';
         const points=data.series.filter(p=>p[0]>=at&&p[0]<at+3600);
         const used=points.reduce((n,p)=>n+p[1],0)/3600;
         const covered=points.reduce((n,p)=>n+p[2],0);
         const expected=Math.max(0,Math.min(at+3600,range.end)-Math.max(at,range.start)) * data.devices.length;
-        const partial=!future && (!expected || covered/expected<.9);
-        const label=`${formatTime(at)} · ${future?tr('future'):num(used,2)+' GPU·h'}${partial?' · '+tr('unknown'):''}`;
-        cells.push(`<button type="button" class="usage-cell ${partial?'partial':''} ${future?'future':''}" style="--intensity:${Math.min(.95,.08+used/Math.max(1,data.summary.gpu_count)*.87)}" data-hour="${at}" ${future?'disabled':''} aria-pressed="${selection?.hour===at}" title="${esc(label)}" aria-label="${esc(label)}"><span>${date(at).getHours()}</span></button>`);
-      }
-      rows.push(`<div class="usage-heat-row"><span>${esc(day.toLocaleDateString(I18N.timeLocale(),{month:'2-digit',day:'2-digit'}))}</span><div class="usage-cells" style="--columns:${cells.length}">${cells.join('')}</div></div>`);
-    }
-    return `<div class="usage-heatmap">${rows.join('')}</div>`;
-  }
-  function distribution() {
-    const devices=[...(data?.devices??[])].filter(d=>d.seconds>0).sort((a,b)=>b.seconds-a.seconds);
-    if (!devices.length) return empty();
-    const max=devices[0].seconds;
-    return devices.map(d=>`<button class="usage-distribution" type="button" data-device="${esc(d.host+'|'+d.uuid)}"><span>${esc(d.host)} / GPU ${d.index}<small>${esc(d.name)}</small></span><span class="usage-bar"><i style="width:${d.seconds/max*100}%"></i></span><strong>${hours(d.seconds)} GPU·h</strong></button>`).join('');
+        const partial=!expected || covered/expected<.9;
+        const label=`${formatTime(at)} · ${num(used,2)} GPU·h${partial?' · '+tr('unknown'):''}`;
+        return `<button type="button" class="usage-cell ${partial?'partial':''}" style="--intensity:${Math.min(.95,.08+used/Math.max(1,data.summary.gpu_count)*.87)}" data-hour="${at}" aria-pressed="${selection?.hour===at}" title="${esc(label)}" aria-label="${esc(label)}"></button>`;
+      }).join('');
+      const count=multiple?columns:visible.length;
+      const timeLabel=at=>date(at).toLocaleTimeString(I18N.timeLocale(),{hour:'2-digit',minute:'2-digit',hour12:false});
+      const axis=!multiple?`<div class="usage-heat-times"><span>${esc(timeLabel(visible[0]))}</span><span>${esc(timeLabel(visible[visible.length-1]+3600))}</span></div>`:'';
+      return `<div class="usage-heat-row"><span>${esc(day.toLocaleDateString(I18N.timeLocale(),{month:'2-digit',day:'2-digit'}))}</span><div class="usage-heat-content" style="--columns:${count}"><div class="usage-cells" style="--columns:${count}">${cells}</div>${axis}</div></div>`;
+    }).join('');
+    const axis=multiple?'<div class="usage-heat-row usage-heat-axis"><span></span><div><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div></div>':'';
+    return `<div class="usage-heatmap ${multiple?'multiple':''}">${rows}${axis}<div class="usage-heat-legend"><span>${esc(tr('less'))}</span><i style="--intensity:.08"></i><i style="--intensity:.35"></i><i style="--intensity:.65"></i><i style="--intensity:.95"></i><span>${esc(tr('more_usage'))}</span><i class="partial"></i><span>${esc(tr('unknown'))}</span></div></div>`;
   }
   function records() {
     let rows=data?.sessions??[];
-    if(selection?.device) rows=rows.filter(s=>s.host+'|'+s.uuid===selection.device);
     if(selection?.hour!==undefined) rows=rows.filter(s=>s.start<selection.hour+3600&&s.end>selection.hour);
     if(selection?.session) rows=rows.filter(s=>s.host===selection.session.host && s.uuid===selection.session.uuid && s.start===selection.session.start);
     if(!rows.length) return empty();
@@ -179,7 +182,7 @@
       <div class="usage-meta"><span>${esc(tr('coverage'))}: ${summary.coverage===null?'—':num(summary.coverage*100,1)+'%'}</span><span>${esc(formatTime(data.start))} — ${esc(formatTime(data.end))} · ${esc(Intl.DateTimeFormat().resolvedOptions().timeZone)}</span></div>
       <section class="usage-section"><div class="section-heading"><div><div class="eyebrow">ACTIVITY</div><h2>${esc(tr('trend'))}</h2><p>${esc(tr('trend_hint'))}</p></div></div>${trend()}</section>
       <section class="usage-section"><div class="section-heading"><div><div class="eyebrow">TIMELINE</div><h2>${esc(tr('timeline'))}</h2><p>${esc(tr('timeline_hint'))}</p></div><span class="usage-legend"><i></i>${esc(tr('personal'))}<i class="shared"></i>${esc(tr('shared'))}</span></div>${timeline()}</section>
-      <div class="usage-columns"><section class="usage-section"><div class="section-heading"><div><div class="eyebrow">RHYTHM</div><h2>${esc(tr('heatmap'))}</h2><p>${esc(tr('heatmap_hint'))}</p></div></div>${heatmap()}</section><section class="usage-section"><div class="section-heading"><div><div class="eyebrow">DEVICES</div><h2>${esc(tr('distribution'))}</h2></div></div>${distribution()}</section></div>
+      <section class="usage-section"><div class="section-heading"><div><div class="eyebrow">RHYTHM</div><h2>${esc(tr('heatmap'))}</h2><p>${esc(tr('heatmap_hint'))}</p></div></div>${heatmap()}</section>
       <section class="usage-section"><div class="section-heading"><div><div class="eyebrow">HISTORY</div><h2>${esc(tr('records'))}</h2><p>${esc(tr('load_hint'))}</p></div>${selection?`<button class="button secondary" id="usage-clear">${esc(tr('clear'))}</button>`:''}</div>${records()}</section>`}
       <footer><span>${esc(tr('retention'))}</span><span>NVML / SSH / SQLite</span></footer>`;
   }
@@ -191,7 +194,6 @@
     if(button.dataset.days) { days=Number(button.dataset.days); selection=null; data=null; serial++; loading=false; refresh(); }
     if(button.dataset.session!==undefined) { selection={session:data.sessions[Number(button.dataset.session)]}; limit=40; render(); document.querySelector('#usage-clear')?.scrollIntoView({block:'nearest'}); }
     if(button.dataset.hour!==undefined) { selection={hour:Number(button.dataset.hour)}; limit=40; render(); }
-    if(button.dataset.device) { selection={device:button.dataset.device}; limit=40; render(); }
     if(button.id==='usage-clear') { selection=null; render(); }
     if(button.id==='usage-more') { limit+=40; render(); }
   });
