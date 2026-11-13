@@ -106,6 +106,22 @@ class WorkerTests(unittest.TestCase):
 
 
 class ConfigTests(unittest.TestCase):
+    def test_timeout_defaults_and_explicit_overrides(self):
+        config = json.loads((Path(__file__).resolve().parents[1] / 'config.example.json').read_text())
+        self.assertEqual(config.pop('ssh_connect_timeout_seconds'), 15)
+        self.assertEqual(config.pop('collection_timeout_seconds'), 25)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'config.json'
+            path.write_text(json.dumps(config))
+            settings = load_config(path)
+            self.assertEqual(settings['ssh_connect_timeout_seconds'], 15)
+            self.assertEqual(settings['collection_timeout_seconds'], 25)
+            config.update(ssh_connect_timeout_seconds=8, collection_timeout_seconds=10)
+            path.write_text(json.dumps(config))
+            settings = load_config(path)
+            self.assertEqual(settings['ssh_connect_timeout_seconds'], 8)
+            self.assertEqual(settings['collection_timeout_seconds'], 10)
+
     def test_rejects_conflicting_ports_and_shell_options(self):
         base = json.loads((Path(__file__).resolve().parents[1] / 'config.example.json').read_text())
         cases = []

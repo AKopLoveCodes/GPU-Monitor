@@ -2,6 +2,7 @@
 """Start and stop only this checkout's GPU Monitor background service."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 import fcntl
 import getpass
 import hashlib
@@ -25,7 +26,8 @@ import webbrowser
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.bootstrap import asset_for_current_platform, custom_exporter_path, install
-from server import control_socket_path, load_config
+from scripts.ssh_smi import DEFAULT_CONNECT_TIMEOUT
+from server import DEFAULT_COLLECTION_TIMEOUT, control_socket_path, load_config
 
 RUNTIME = ROOT / ".runtime"
 STATE = RUNTIME / "service.json"
@@ -119,19 +121,20 @@ def ssh_aliases(config_path=None):
     return aliases
 
 
-def probe_host(host):
+def probe_host(host, connect_timeout=DEFAULT_CONNECT_TIMEOUT):
     """Run the two read-only remote capability checks used by the application."""
-    ssh = ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", host]
+    ssh = ["ssh", "-T", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={connect_timeout}", host]
+    command_timeout = connect_timeout + 6
     gpu_command = shlex.join(["nvidia-smi", "--query-gpu=index,name,memory.total", "--format=csv,noheader"])
     try:
-        gpu = subprocess.run([*ssh, gpu_command], capture_output=True, text=True, timeout=12)
+        gpu = subprocess.run([*ssh, gpu_command], capture_output=True, text=True, timeout=command_timeout)
     except (OSError, subprocess.TimeoutExpired):
         return {"host": host, "gpu": False, "ps": False, "reason": "SSH connection failed or timed out"}
     if gpu.returncode != 0 or not gpu.stdout.strip():
         return {"host": host, "gpu": False, "ps": False, "reason": "nvidia-smi did not return a GPU"}
     ps_command = shlex.join(["ps", "-ww", "-p", "1", "-o", PS_FORMAT])
     try:
-        ps = subprocess.run([*ssh, ps_command], capture_output=True, text=True, timeout=12)
+        ps = subprocess.run([*ssh, ps_command], capture_output=True, text=True, timeout=command_timeout)
     except (OSError, subprocess.TimeoutExpired):
         return {"host": host, "gpu": True, "ps": False, "reason": "remote ps check timed out"}
     return {"host": host, "gpu": True, "ps": ps.returncode == 0, "reason": "" if ps.returncode == 0 else "remote ps format is unavailable"}
@@ -170,7 +173,8 @@ def generated_config(hosts, port, own_users):
         used.add(name)
         servers.append({"name": name, "ssh_host": host})
     return {"listen": "127.0.0.1", "port": port, "interval_seconds": 3,
-            "collection_timeout_seconds": 10, "history_points": 100,
+            "ssh_connect_timeout_seconds": DEFAULT_CONNECT_TIMEOUT,
+            "collection_timeout_seconds": DEFAULT_COLLECTION_TIMEOUT, "history_points": 100,
             "own_users": sorted(set(own_users)), "servers": servers}
 
 
@@ -214,8 +218,10 @@ def initialize(args):
         raise RuntimeError("hosts must be SSH aliases or user@host values containing only letters, digits, dot, underscore, @ or hyphen")
     candidates = list(dict.fromkeys(candidates))
     print("Checking %d SSH candidate(s) with read-only nvidia-smi…" % len(candidates), flush=True)
+    probe = (partial(probe_host, connect_timeout=existing["ssh_connect_timeout_seconds"])
+             if existing else probe_host)
     with ThreadPoolExecutor(max_workers=min(8, len(candidates))) as pool:
-        results = list(pool.map(probe_host, candidates))
+        results = list(pool.map(probe, candidates))
     selected = [result for result in results if result["gpu"]]
     for result in results:
         state = "GPU OK" if result["gpu"] else "skipped"
@@ -295,8 +301,9 @@ def doctor():
         else:
             print("  dashboard port: OK")
     if shutil.which("ssh"):
+        probe = partial(probe_host, connect_timeout=settings["ssh_connect_timeout_seconds"])
         with ThreadPoolExecutor(max_workers=min(8, len(settings["servers"]))) as pool:
-            results = list(pool.map(probe_host, [host["ssh_host"] for host in settings["servers"]]))
+            results = list(pool.map(probe, [host["ssh_host"] for host in settings["servers"]]))
         for host, result in zip(settings["servers"], results):
             socket_path = control_socket_path(RUNTIME, host["name"])
             if not result["gpu"]:

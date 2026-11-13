@@ -31,6 +31,8 @@ Host gpu-01
 
     def test_generated_configuration_needs_no_exporter_ports(self):
         settings = generated_config(['research@alpha.example', 'alpha.example'], 8765, ['researcher'])
+        self.assertEqual(settings['ssh_connect_timeout_seconds'], 15)
+        self.assertEqual(settings['collection_timeout_seconds'], 25)
         self.assertEqual(settings['servers'], [
             {'name': 'alpha-example', 'ssh_host': 'research@alpha.example'},
             {'name': 'alpha-example-2', 'ssh_host': 'alpha.example'},

@@ -8,18 +8,19 @@ import subprocess
 import threading
 import time
 
-from scripts.ssh_smi import ssh_options
+from scripts.ssh_smi import DEFAULT_CONNECT_TIMEOUT, ssh_options
 
 
-def remote(host, action, control, **payload):
+def remote(host, action, control, *, connect_timeout=DEFAULT_CONNECT_TIMEOUT, **payload):
     source = Path(__file__).with_name('agent_remote.py').read_text()
     body = json.dumps(dict(payload, action=action))
-    completed = subprocess.run(['ssh', *ssh_options(control), host,
+    command_timeout = 150 if action in ('install', 'upgrade', 'clear-data', 'uninstall', 'rollback') else connect_timeout + 14
+    completed = subprocess.run(['ssh', *ssh_options(control, connect_timeout=connect_timeout), host,
                                 shlex.join(['python3', '-c', source])],
                                # SSH diagnostics may use the remote locale or be truncated
                                # on disconnect. They must not kill the background sync.
                                input=body, capture_output=True, text=True, encoding='utf-8', errors='replace',
-                               timeout=150 if action in ('install', 'upgrade', 'clear-data', 'uninstall', 'rollback') else 20)
+                               timeout=command_timeout)
     try:
         result = json.loads(completed.stdout)
     except ValueError:
@@ -30,8 +31,9 @@ def remote(host, action, control, **payload):
 
 
 class UsageClient:
-    def __init__(self, host, control, stop):
+    def __init__(self, host, control, stop, connect_timeout=DEFAULT_CONNECT_TIMEOUT):
         self.host, self.control, self.stop = host, control, stop
+        self.connect_timeout = connect_timeout
         self.lock = threading.Lock()
         self.request_lock = threading.Lock()
         self.generation = 0
@@ -63,7 +65,8 @@ class UsageClient:
                 previous = copy.deepcopy(self.state)
                 generation = self.generation
             since = max(now - 7 * 86400, previous.get('fetched_at', 0) - 120)
-            data = remote(self.host, 'query', self.control, start=since, end=now, step=60)
+            data = remote(self.host, 'query', self.control, connect_timeout=self.connect_timeout,
+                          start=since, end=now, step=60)
             if (data['status'] != 'not_installed' and previous.get('users') == data.get('users')
                     and previous.get('metadata', {}).get('database_id') == data.get('metadata', {}).get('database_id')):
                 cutoff = max((int((now - 7 * 86400) // 60) + 1) * 60, data.get('retained_from') or 0)
@@ -75,7 +78,8 @@ class UsageClient:
                 devices.update({d['id']: d for d in data['devices']})
                 data['devices'] = list(devices.values())
             if previous.get('metadata', {}).get('database_id') != data.get('metadata', {}).get('database_id') and since > now - 7 * 86400:
-                data = remote(self.host, 'query', self.control, start=now - 7 * 86400, end=now, step=60)
+                data = remote(self.host, 'query', self.control, connect_timeout=self.connect_timeout,
+                              start=now - 7 * 86400, end=now, step=60)
             data['fetched_at'] = time.time()
             with self.lock:
                 if generation == self.generation:

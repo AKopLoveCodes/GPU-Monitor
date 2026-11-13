@@ -92,6 +92,12 @@ Edit the generated `config.json` and restart to apply changes. Set `own_users` t
 collection interval, are in [config.example.json](config.example.json).
 Switch language and theme in the **Appearance** menu.
 
+SSH connection setup defaults to 15 seconds (`ssh_connect_timeout_seconds`).
+A GPU collection cycle can take up to 25 seconds by default
+(`collection_timeout_seconds`). Explicit settings in an existing `config.json`
+override these defaults. Git ignores `config.json` because it contains
+machine-specific SSH aliases and user names.
+
 Trend means cover the actual elapsed time between successful updates. All utilization
 samples, including fallback point samples, are connected with a solid line.
 See the GPU card for the current source and 30-second window coverage. Missing data stays unknown. Individual device errors are isolated;

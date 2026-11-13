@@ -10,7 +10,7 @@ import subprocess
 import threading
 import time
 
-from scripts.ssh_smi import ssh_options
+from scripts.ssh_smi import DEFAULT_CONNECT_TIMEOUT, ssh_options
 
 
 def summarize(samples, end, seconds):
@@ -36,8 +36,9 @@ def summarize(samples, end, seconds):
 
 
 class NvmlHistory:
-    def __init__(self, host, control, runtime, stop):
+    def __init__(self, host, control, runtime, stop, connect_timeout=DEFAULT_CONNECT_TIMEOUT):
         self.host, self.control, self.runtime, self.stop = host, control, runtime, stop
+        self.connect_timeout = connect_timeout
         self.lock = threading.Lock()
         self.thread = self.process = None
         self.closed = threading.Event()
@@ -127,14 +128,15 @@ class NvmlHistory:
         with open(self.runtime / (self.host + "-nvml.log"), "a") as log:
             while not self.closed.is_set() and not self.stop.is_set():
                 try:
-                    process = subprocess.Popen(["ssh", *ssh_options(self.control, multiplex=False), self.host, command],
+                    options = ssh_options(self.control, multiplex=False, connect_timeout=self.connect_timeout)
+                    process = subprocess.Popen(["ssh", *options, self.host, command],
                                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                                stderr=log, bufsize=0)
                     with self.lock:
                         self.process = process
                     try:
                         pending = b""
-                        deadline = time.monotonic() + 12
+                        deadline = time.monotonic() + self.connect_timeout + 6
                         while not self.closed.is_set() and not self.stop.is_set():
                             ready, _, _ = select.select([process.stdout], [], [], 1)
                             if not ready:

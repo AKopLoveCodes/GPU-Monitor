@@ -6,6 +6,7 @@ import time
 import uuid
 from pathlib import Path
 
+from scripts.ssh_smi import DEFAULT_CONNECT_TIMEOUT
 from scripts.usage_client import remote
 
 
@@ -18,14 +19,15 @@ def bundle(users):
 
 def operate(host, settings, control, action, progress=lambda step: None):
     payload = {}
+    connect_timeout = settings.get('ssh_connect_timeout_seconds', DEFAULT_CONNECT_TIMEOUT)
     if action in ('install', 'upgrade'):
         progress('checking')
-        caps = remote(host['ssh_host'], 'check', control)
+        caps = remote(host['ssh_host'], 'check', control, connect_timeout=connect_timeout)
         if not caps.get('python_supported') or caps.get('nvml_error') or not caps.get('gpu_count'):
             raise RuntimeError('Remote Python 3.8+ and NVIDIA NVML are required: ' + str(caps.get('nvml_error') or caps.get('python')))
         payload = bundle(host.get('own_users', settings.get('own_users', [])))
     progress('deploying' if action in ('install', 'upgrade') else action)
-    result = remote(host['ssh_host'], action, control, **payload)
+    result = remote(host['ssh_host'], action, control, connect_timeout=connect_timeout, **payload)
     if action in ('install', 'upgrade') and result.get('status') != 'recording':
         raise RuntimeError('Recorder did not start successfully')
     progress('done')

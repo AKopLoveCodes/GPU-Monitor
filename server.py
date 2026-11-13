@@ -26,10 +26,11 @@ from scripts.agent_manager import AgentManager
 from scripts.usage_summary import summarize as summarize_usage
 
 from scripts.bootstrap import exporter_path
-from scripts.ssh_smi import ssh_options
+from scripts.ssh_smi import DEFAULT_CONNECT_TIMEOUT, ssh_options
 from scripts.nvml_history import NvmlHistory
 
 ROOT = Path(__file__).resolve().parent
+DEFAULT_COLLECTION_TIMEOUT = 25
 FIELDS = "index,uuid,name,driver_version,memory.total,memory.used,memory.free,utilization.gpu,utilization.memory,temperature.gpu,power.draw,power.limit,fan.speed"
 SAMPLE = re.compile(r'^([a-zA-Z_:][\w:]*)(?:\{(.*)\})?\s+([^\s]+)(?:\s+\S+)?$')
 LABEL = re.compile(r'([a-zA-Z_]\w*)="((?:\\.|[^"\\])*)"')
@@ -152,7 +153,8 @@ class HostMonitor:
         self.process = None
         self.log = None
         self.control = control_socket_path(runtime, config["name"])
-        self.nvml = (NvmlHistory(config["ssh_host"], self.control, runtime, stop_event)
+        self.connect_timeout = settings.get("ssh_connect_timeout_seconds", DEFAULT_CONNECT_TIMEOUT)
+        self.nvml = (NvmlHistory(config["ssh_host"], self.control, runtime, stop_event, self.connect_timeout)
                      if settings.get("utilization_backend", "nvml") == "nvml" else None)
         # exporter_port is accepted only for backwards-compatible existing
         # configurations. New configurations let the application allocate it.
@@ -160,7 +162,7 @@ class HostMonitor:
         self.auto_exporter_port = self.exporter_port is None
         self.history = defaultdict(lambda: deque(maxlen=settings["history_points"]))
         self.last_trend_monotonic = None
-        self.usage = UsageClient(config["ssh_host"], self.control, stop_event)
+        self.usage = UsageClient(config["ssh_host"], self.control, stop_event, self.connect_timeout)
         self.raw_metrics = ""
         self.state = {"name": config["name"], "ssh_host": config["ssh_host"], "status": "connecting",
                       "error": None, "error_code": None, "warning": None, "warning_code": None,
@@ -189,15 +191,18 @@ class HostMonitor:
             if self.auto_exporter_port:
                 self.exporter_port = reserve_loopback_port()
             self.log = open(self.runtime / (self.config["name"] + "-exporter.log"), "a", buffering=1)
-            wrapper = shlex.join([sys.executable, str(ROOT / "scripts/ssh_smi.py"), self.config["ssh_host"], self.control])
+            collection_timeout = self.settings["collection_timeout_seconds"]
+            wrapper = shlex.join([sys.executable, str(ROOT / "scripts/ssh_smi.py"),
+                                  "--connect-timeout", str(self.connect_timeout), self.config["ssh_host"], self.control])
             self.process = subprocess.Popen([
                 str(exporter_path()),
                 "--web.listen-address=127.0.0.1:" + str(self.exporter_port),
+                f"--web.write-timeout={max(15, collection_timeout + 2)}s",
                 "--nvidia-smi-command=" + wrapper, "--query-field-names=" + FIELDS,
-                "--collect.compute-apps", "--collect.timeout=" + str(self.settings["collection_timeout_seconds"]) + "s",
+                "--collect.compute-apps", f"--collect.timeout={collection_timeout}s",
                 "--no-shutdown-on-error", "--log.level=warn"], stdout=self.log, stderr=self.log)
             # Startup itself queries GPU metadata over SSH. Bound the wait independently.
-            deadline = time.monotonic() + self.settings["collection_timeout_seconds"] + 2
+            deadline = time.monotonic() + collection_timeout + 2
             while not self.stop.is_set() and time.monotonic() < deadline:
                 if self.process.poll() is not None:
                     break
@@ -231,8 +236,9 @@ class HostMonitor:
         if not pids:
             return None
         command = shlex.join(["ps", "-ww", "-p", ",".join(map(str, pids)), "-o", "pid=,user:32=,pcpu=,pmem=,etimes=,args="])
-        completed = subprocess.run(["ssh", *ssh_options(self.control), self.config["ssh_host"], command],
-                                   capture_output=True, text=True, timeout=8)
+        completed = subprocess.run(["ssh", *ssh_options(self.control, connect_timeout=self.connect_timeout),
+                                    self.config["ssh_host"], command],
+                                   capture_output=True, text=True, timeout=self.connect_timeout + 2)
         if completed.returncode not in (0, 1):
             raise MonitorError("process_details_failed", "remote ps query failed with exit code %d" % completed.returncode)
         details = parse_ps(completed.stdout)
@@ -342,16 +348,19 @@ def load_config(path):
     settings = json.loads(path.read_text())
     if not isinstance(settings, dict):
         raise ValueError("config.json must contain one JSON object")
-    missing = [key for key in ("listen", "port", "interval_seconds", "collection_timeout_seconds",
-                               "history_points", "servers") if key not in settings]
+    missing = [key for key in ("listen", "port", "interval_seconds", "history_points", "servers")
+               if key not in settings]
     if missing:
         raise ValueError("config.json is missing keys: " + ", ".join(missing) + " (see config.example.json)")
     if settings["listen"] != "127.0.0.1":
         raise ValueError("this dashboard only supports listening on 127.0.0.1")
     if settings.setdefault("utilization_backend", "nvml") not in ("nvml", "exporter"):
         raise ValueError("utilization_backend must be nvml or exporter")
+    settings.setdefault("ssh_connect_timeout_seconds", DEFAULT_CONNECT_TIMEOUT)
+    settings.setdefault("collection_timeout_seconds", DEFAULT_COLLECTION_TIMEOUT)
     integer_settings = {"port": (1024, 65535), "interval_seconds": (1, None),
-                        "collection_timeout_seconds": (1, 30), "history_points": (2, 1200)}
+                        "collection_timeout_seconds": (1, 30),
+                        "ssh_connect_timeout_seconds": (1, None), "history_points": (2, 1200)}
     for key, (minimum, maximum) in integer_settings.items():
         value = settings[key]
         if isinstance(value, bool) or not isinstance(value, int) or value < minimum or (maximum is not None and value > maximum):
